@@ -1,0 +1,30 @@
+{
+  "success": true,
+  "searchType": "semantic-legislation",
+  "query": "synthetic",
+  "resultCount": 1,
+  "results": [
+    {
+      "id": "o-32099L0003-art_12",
+      "law_id": "32099L0003",
+      "law_title": "Directive (EU) 2099/3 (synthetic)",
+      "article_ref": "art_12",
+      "language": "en",
+      "score": 0.75,
+      "text": "[SYNTHETIC FIXTURE - not the text of the act] UNRESOLVEDTEXTTOKEN latest indexed article twelve",
+      "snippet": "[SYNTHETIC FIXTURE - not the text of the act] UNRESOLVEDSNIPPETTOKEN latest snippet",
+      "asOf": "2099-06-01",
+      "asOfResolved": false,
+      "asOfReason": "fetch_timeout"
+    }
+  ],
+  "credits": {
+    "operation_weight": 9,
+    "remaining": 991
+  },
+  "asOf": "2099-06-01",
+  "asOfSummary": {
+    "liveFetches": 1,
+    "unresolved": 1
+  }
+}

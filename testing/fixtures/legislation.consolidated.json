@@ -1,0 +1,42 @@
+{
+  "success": true,
+  "searchType": "semantic-legislation",
+  "query": "synthetic",
+  "resultCount": 1,
+  "results": [
+    {
+      "id": "asof:02099R0001-20990101:art_17",
+      "law_id": "02099R0001-20990101",
+      "law_title": "Regulation (EU) 2099/1 (synthetic)",
+      "article_ref": "art_17",
+      "language": "en",
+      "score": 0.91,
+      "text": "[SYNTHETIC FIXTURE - not the text of the act] consolidated article seventeen",
+      "snippet": "[SYNTHETIC FIXTURE - not the text of the act] consolidated article",
+      "consolidated": true,
+      "consolidatedAsOf": "2099-01-01",
+      "baseCelex": "32099R0001",
+      "consolidatedNote": "The act as amended, consolidated as of 2099-01-01; not the authentic text. Only the act as published in the Official Journal is authentic (32099R0001).",
+      "provenance": {
+        "sourceUrl": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02099R0001-20990101",
+        "retrievedAt": null
+      },
+      "asOf": "2099-06-01",
+      "asOfResolved": true,
+      "asOfVersion": {
+        "celex": "02099R0001-20990101",
+        "date": "2099-01-01",
+        "kind": "consolidated"
+      }
+    }
+  ],
+  "credits": {
+    "operation_weight": 9,
+    "remaining": 991
+  },
+  "asOf": "2099-06-01",
+  "asOfSummary": {
+    "liveFetches": 1,
+    "unresolved": 0
+  }
+}

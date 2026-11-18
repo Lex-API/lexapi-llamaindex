@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "searchType": "semantic-legislation",
+  "query": "synthetic",
+  "resultCount": 0,
+  "results": [],
+  "credits": {
+    "operation_weight": 5,
+    "remaining": 995
+  }
+}

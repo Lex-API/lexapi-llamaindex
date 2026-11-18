@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded"
+  },
+  "retryAfter": 30
+}

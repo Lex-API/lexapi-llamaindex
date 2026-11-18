@@ -1,0 +1,35 @@
+{
+  "success": true,
+  "document": {
+    "celex": "32099R0001",
+    "title": "Regulation (EU) 2099/1 (synthetic)",
+    "language": "en",
+    "eli": "http://data.europa.eu/eli/reg/2099/1/oj",
+    "content": {
+      "articles": [
+        {
+          "id": "art_1",
+          "number": "Article 1",
+          "title": "Subject matter",
+          "content": "[SYNTHETIC FIXTURE - not the text of the act] article one"
+        },
+        {
+          "id": "art_17",
+          "number": "Article 17",
+          "title": "Synthetic right",
+          "content": "[SYNTHETIC FIXTURE - not the text of the act] article seventeen"
+        }
+      ]
+    },
+    "urls": {
+      "html": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32099R0001"
+    },
+    "provenance": {
+      "sourceUrl": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32099R0001"
+    }
+  },
+  "credits": {
+    "operation_weight": 1,
+    "remaining": 990
+  }
+}

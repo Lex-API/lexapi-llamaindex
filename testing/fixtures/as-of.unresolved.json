@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "document": "32099R0001",
+  "act": {
+    "celex": "32099R0001"
+  },
+  "language": "en",
+  "asOf": "2099-06-01",
+  "asOfResolved": false,
+  "asOfReason": "amendment_not_consolidated",
+  "credits": {
+    "operation_weight": 1,
+    "remaining": 99
+  },
+  "provenance": {
+    "publisher": "Publications Office of the European Union (synthetic)",
+    "sourceUrl": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32099R0001",
+    "sourceIdentifier": "CELEX:32099R0001",
+    "retrievedAt": "2099-06-01T00:00:00.000Z",
+    "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "versionIdentifier": "32099R0001",
+    "language": "en",
+    "licence": "synthetic fixture"
+  }
+}
