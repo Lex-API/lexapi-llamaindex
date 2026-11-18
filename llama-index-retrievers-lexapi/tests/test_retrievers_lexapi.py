@@ -1049,3 +1049,12 @@ def test_the_second_half_lower_bound(position: int, kept: str) -> None:
     text = "a" * position + " " + "b" * 200
     out, cut = cut_text(text, 100)
     assert cut and out.split("\n[Text cut by ")[0] == kept
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_non_strict_json_raises(token: str) -> None:
+    body = json.dumps(load_fixture("legislation.mixed.json")).replace("0.91", token, 1)
+    client, _ = make_client({LEG: Route(body), CASE: Route(body)})
+    for retriever in (LexAPILegislationRetriever(client), LexAPICaseLawRetriever(client)):
+        with pytest.raises(lexapi.InvalidResponseError):
+            retriever.retrieve("q")

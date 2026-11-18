@@ -1435,3 +1435,101 @@ def test_document_shape_check_on_its_own(document: Any) -> None:
         _check_document_shape(DocumentResponse({"success": True, "document": document}))
     assert str(info.value) == NO_STATUS
     _check_document_shape(DocumentResponse(load_fixture("document.read.json")))
+
+
+# ── blank optional arguments ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "message"),
+    [
+        (
+            "lexapi_read_document",
+            {"celex": "32099R0001", "article": "   "},
+            "Invalid argument: article must not be empty",
+        ),
+        (
+            "lexapi_read_document",
+            {"celex": "32099R0001", "article": ""},
+            "Invalid argument: article must not be empty",
+        ),
+        (
+            "lexapi_legislation_as_of",
+            {"celex": "32099R0001", "as_of": AS_OF, "provision": " \t"},
+            "Invalid argument: provision must not be empty",
+        ),
+        (
+            "lexapi_legislation_as_of",
+            {"celex": "32099R0001", "as_of": AS_OF, "provision": ""},
+            "Invalid argument: provision must not be empty",
+        ),
+    ],
+)
+async def test_blank_optional_arguments_are_refused(
+    name: str, args: dict[str, Any], message: str
+) -> None:
+    spec, requests = spec_for(ROUTES)
+    aclient, arecorder = make_async_client(ROUTES)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    with pytest.raises(LexAPIToolError) as info:
+        getattr(spec, name)(**args)
+    assert str(info.value) == message
+    with pytest.raises(LexAPIToolError) as ainfo:
+        await getattr(aspec, "a" + name)(**args)
+    assert str(ainfo.value) == message
+    assert requests == [] and arecorder.requests == []
+
+
+async def test_absent_optional_arguments_are_not_given() -> None:
+    spec, requests = spec_for(ROUTES)
+    aclient, arecorder = make_async_client(ROUTES)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    for call_spec in (spec,):
+        call_spec.lexapi_read_document("32099R0001", article=None)
+        call_spec.lexapi_legislation_as_of("32099R0001", AS_OF, provision=None)
+    await aspec.alexapi_read_document("32099R0001", article=None)
+    await aspec.alexapi_legislation_as_of("32099R0001", AS_OF, provision=None)
+    for recorded in (requests, arecorder.requests):
+        read, as_of = (json.loads(r.content) for r in recorded)
+        assert "articleId" not in read
+        assert "provision" not in as_of
+
+
+def test_a_later_article_exactly_filling_the_budget_is_shown() -> None:
+    spec, _ = spec_for({DOC: Route(long_document([150, 300, 50]))}, max_chars=450)
+    with collect() as events:
+        out = spec.lexapi_read_document("32099R0001")
+    assert out.count("Source: CELEX") == 2
+    assert "\n\n[2] " in out and "[3] " not in out
+    assert out.endswith(
+        "[Not shown: 1 more article(s) of CELEX 32099R0001: art_3. "
+        "Read one with the article argument.]"
+    )
+    assert (events[0].report.returned, events[0].report.not_shown) == (2, 1)
+    assert _shown_text_total(out) == 450
+
+
+def test_a_cut_first_article_ends_the_read() -> None:
+    spec, _ = spec_for({DOC: Route(long_document([600, 10]))}, max_chars=450)
+    out = spec.lexapi_read_document("32099R0001")
+    assert out.count("Source: CELEX") == 1
+    assert "[Text cut by llama-index-tools-lexapi: " in out
+    assert "art_2. Read one with the article argument.]" in out
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity"])
+def test_non_strict_json_gives_the_unreadable_text(token: str) -> None:
+    routes = {
+        LEG: Route(json.dumps(load_fixture("legislation.mixed.json")).replace("0.91", token, 1)),
+        DOC: Route('{"success": true, "document": {"celex": "32099R0001", "x": ' + token + "}}"),
+        ASOF: Route(
+            json.dumps(load_fixture("as-of.resolved.json")).replace(
+                '"remaining": 96', f'"remaining": {token}'
+            )
+        ),
+    }
+    spec, _ = spec_for(routes)
+    for name, args in CALLS:
+        with pytest.raises(LexAPIToolError) as info:
+            getattr(spec, name)(**args)
+        assert str(info.value) == WITH_STATUS

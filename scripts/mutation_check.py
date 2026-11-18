@@ -420,6 +420,24 @@ MUTANTS = [
         "        break",
     ),
     Mutant(
+        "blank article sent",
+        TOOLS_BASE,
+        '        _check_optional(article, "article")\n',
+        "",
+    ),
+    Mutant(
+        "blank provision sent",
+        TOOLS_BASE,
+        '        _check_optional(provision, "provision")\n',
+        "",
+    ),
+    Mutant(
+        "budget refuses an exact fill",
+        TOOLS_BASE,
+        "        if length <= remaining:",
+        "        if length < remaining:",
+    ),
+    Mutant(
         "whitespace-only celex accepted",
         TOOLS_BASE,
         "    if not isinstance(celex, str) or not celex.strip():",

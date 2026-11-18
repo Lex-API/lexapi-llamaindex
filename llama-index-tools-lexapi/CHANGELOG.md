@@ -29,3 +29,10 @@
 - Read answers must carry a non-empty `celex` string and a string
   `content.fullText` when present; the first passage of a read is always
   shown, a notice whole.
+- The pinned `lexapi-client` reads answers as strict JSON (`NaN` and
+  `Infinity` are refused): the tools give `LexAPI error INVALID_RESPONSE (HTTP
+  200): The answer could not be read.`
+- A whitespace-only `article` (read tool) or `provision` (as-of tool) is
+  refused before any request with `Invalid argument: article must not be
+  empty` / `Invalid argument: provision must not be empty`; an absent one is
+  still "not given".

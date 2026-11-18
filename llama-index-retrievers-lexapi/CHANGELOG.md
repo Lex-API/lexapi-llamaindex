@@ -25,3 +25,5 @@
   space there, else at the limit.
 - Depends on `lexapi-client` from its repository at commit `19da4dd` until
   0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).
+- The pinned `lexapi-client` reads answers as strict JSON (`NaN` and
+  `Infinity` are refused): retrievers raise `lexapi.InvalidResponseError`.
