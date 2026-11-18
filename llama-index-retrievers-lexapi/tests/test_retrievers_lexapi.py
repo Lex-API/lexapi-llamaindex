@@ -30,11 +30,13 @@ from llama_index.core.schema import MetadataMode, NodeWithScore, TextNode
 
 from llama_index.retrievers.lexapi import (
     EXCLUDED_LLM_METADATA_KEYS,
+    LexAPICallReport,
     LexAPICaseLawRetriever,
     LexAPILegislationRetriever,
     LexAPIRetrievalEvent,
 )
 from llama_index.retrievers.lexapi._client import user_agent_suffix
+from llama_index.retrievers.lexapi._nodes import truncate
 
 LEG = "/legislation/semantic"
 CASE = "/search/semantic"
@@ -422,7 +424,7 @@ def test_sync_with_only_an_async_client_says_so() -> None:
 async def test_async_case_law_equals_sync() -> None:
     client, _ = make_client({CASE: fixture_route("caselaw.with-text.json")})
     aclient, _ = make_async_client({CASE: fixture_route("caselaw.with-text.json")})
-    retriever = LexAPICaseLawRetriever(client, aclient, max_chars=60)
+    retriever = LexAPICaseLawRetriever(client, aclient, max_chars=400)
     assert snapshot(retriever.retrieve("q")) == snapshot(await retriever.aretrieve("q"))
 
 
@@ -516,6 +518,8 @@ def test_each_retrieval_dispatches_its_result() -> None:
     assert event.retriever == "LexAPILegislationRetriever"
     assert event.query == "transfer"
     assert event.result.units_charged == 9
+    assert event.report.units_charged == 9
+    assert event.report.returned == 3
     assert event.span_id is not None
 
 
@@ -634,22 +638,34 @@ def test_case_law_never_uses_snippet_or_summary(fixture: str) -> None:
 
 
 def test_case_law_without_text_gives_a_notice() -> None:
-    retriever, requests = case_retriever("caselaw.without-text.json", include_text=False)
+    retriever, requests = case_retriever("caselaw.without-text.json")
     nodes = retriever.retrieve("q")
-    assert "include" not in json.loads(requests[0].content)
+    assert json.loads(requests[0].content)["include"] == ["text"]
     assert text_node(nodes[0]).text.startswith("[No text returned for CELEX 62099CJ9901.]")
     assert text_node(nodes[0]).metadata["text_status"] == "absent"
 
 
+def test_case_law_has_no_include_text_switch() -> None:
+    client, _ = make_client({})
+    with pytest.raises(TypeError):
+        LexAPICaseLawRetriever(client, include_text=False)  # type: ignore[call-arg]
+
+
+NOTE = "[Text cut by llama-index-retrievers-lexapi: {kept} of {total} characters shown. "
+NOTE_END = "The full text is at the source.]"
+
+
 def test_case_law_max_chars_cuts_on_a_paragraph_break_and_marks_it() -> None:
-    retriever, _ = case_retriever("caselaw.with-text.json", max_chars=110)
-    first = text_node(retriever.retrieve("q")[0]).text
+    retriever, _ = case_retriever("caselaw.with-text.json", max_chars=400)
+    got = retriever.retrieve_with_result("q")
+    first = text_node(got.nodes[0]).text
     body = load_fixture("caselaw.with-text.json")["results"][0]["text"]
     paragraphs = body.split("\n\n")
-    assert first.startswith(paragraphs[0] + "\n[Text cut by the retriever after ")
+    note = NOTE.format(kept=len(paragraphs[0]), total=len(body)) + NOTE_END
+    assert first.startswith(paragraphs[0] + "\n" + note + "\nSource: CELEX 62099CJ9901")
     assert paragraphs[1] not in first
-    assert f"of {len(body)} characters (max_chars=110)" in first
-    assert "\nSource: CELEX 62099CJ9901" in first
+    assert got.report.truncated == 1
+    assert text_node(got.nodes[0]).metadata == got.result.passages[0].metadata()
 
 
 def test_case_law_max_chars_leaves_short_texts_alone() -> None:
@@ -657,30 +673,172 @@ def test_case_law_max_chars_leaves_short_texts_alone() -> None:
     expected = passages.from_case_law_search(
         SemanticSearchResponse(load_fixture("caselaw.with-text.json"))
     ).passages
-    assert [text_node(n).text for n in retriever.retrieve("q")] == [
-        passages.format_passage(p) for p in expected
-    ]
+    got = retriever.retrieve_with_result("q")
+    assert [text_node(n).text for n in got.nodes] == [passages.format_passage(p) for p in expected]
+    assert got.report.truncated == 0
 
 
-@pytest.mark.parametrize("bad", [0, -5, True, 1.5])
+@pytest.mark.parametrize("bad", [0, -5, True, 1.5, 199])
 def test_case_law_max_chars_is_validated(bad: Any) -> None:
     client, _ = make_client({})
     with pytest.raises(ValueError, match="max_chars"):
         LexAPICaseLawRetriever(client, max_chars=bad)
+    LexAPICaseLawRetriever(client, max_chars=200)
 
 
-def test_case_law_duplicate_ids_are_merged() -> None:
-    body = load_fixture("caselaw.with-text.json")
-    twin = dict(body["results"][1])
-    twin["score"] = 0.5
-    body["results"].append(twin)
-    client, _ = make_client({CASE: Route(body)})
+def _passage(text: str | None) -> Any:
+    return passages.Passage(kind="case_law", celex="62099CJ9901", text=text, text_status="provided")
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        ("a" * 150 + "\n\n" + "b" * 100, "a" * 150),
+        ("a" * 150 + "\n" + "b" * 100, "a" * 150),
+        ("a" * 150 + " " + "b" * 100, "a" * 150),
+        ("a" * 250, "a" * 200),
+        ("\n\n   " + "a" * 150 + " " + "b" * 100, "a" * 150),
+        ("\n\n" + "a" * 250, "a" * 200),
+    ],
+)
+def test_truncation_rules(text: str, kept: str) -> None:
+    cut, changed = truncate(_passage(text), 200)
+    total = len(text.lstrip())
+    assert changed
+    assert cut.text == kept + "\n" + NOTE.format(kept=len(kept), total=total) + NOTE_END
+
+
+def test_truncation_never_shows_nothing() -> None:
+    cut, _ = truncate(_passage(" " + "a" * 300), 200)
+    assert cut.text is not None and cut.text.startswith("a" * 200)
+
+
+def _dup_body(*statuses: str) -> dict[str, Any]:
+    body: dict[str, Any] = load_fixture("caselaw.with-text.json")
+    base = body["results"][1]
+    hits = []
+    for n, status in enumerate(statuses):
+        hit = dict(base)
+        hit["score"] = round(0.9 - n / 10, 2)
+        if status == "notice":
+            hit.pop("text")
+        else:
+            hit["text"] = f"{status} {n}"
+        hits.append(hit)
+    body["results"] = [body["results"][0], *hits]
+    return body
+
+
+@pytest.mark.parametrize(
+    ("statuses", "winner_score"),
+    [
+        (("notice", "provided"), 0.8),
+        (("provided", "provided"), 0.9),
+        (("provided", "notice"), 0.9),
+        (("notice", "notice", "provided"), 0.7),
+    ],
+)
+def test_duplicate_ids_keep_first_position_and_best_rank(
+    statuses: tuple[str, ...], winner_score: float
+) -> None:
+    client, _ = make_client({CASE: Route(_dup_body(*statuses))})
     got = LexAPICaseLawRetriever(client).retrieve_with_result("q")
-    assert len(got.result.passages) == 3
-    assert [n.score for n in got.nodes] == [0.83, 0.7]
+    assert [n.score for n in got.nodes] == [0.83, winner_score]
+    assert got.report.duplicates == len(statuses) - 1
+    assert got.report.returned == 2
+
+
+def test_labelled_text_outranks_a_notice_and_text_outranks_labelled() -> None:
+    def hit(resolved: bool | None, text: str) -> dict[str, Any]:
+        h: dict[str, Any] = load_fixture("legislation.unresolved.json")["results"][0]
+        h["text"] = text
+        if resolved:
+            h["asOfResolved"] = True
+            h.pop("asOfReason")
+        return h
+
+    body = load_fixture("legislation.unresolved.json")
+    body["results"] = [hit(False, "UNRESOLVED-A"), hit(True, "RESOLVED-B")]
+    client, _ = make_client({LEG: Route(body)})
+    got = LexAPILegislationRetriever(client, as_of=AS_OF).retrieve_with_result("q")
+    (item,) = got.nodes
+    assert "RESOLVED-B" in text_node(item).text
+    assert got.report.duplicates == 1
+    labelled = LexAPILegislationRetriever(
+        client, as_of=AS_OF, unresolved="keep_labelled"
+    ).retrieve_with_result("q")
+    assert "RESOLVED-B" in text_node(labelled.nodes[0]).text
 
 
 def test_case_law_credits() -> None:
     retriever, _ = case_retriever("caselaw.with-text.json")
     got = retriever.retrieve_with_result("q")
-    assert (got.result.units_charged, got.result.credits_remaining) == (5, 995)
+    assert (got.report.units_charged, got.report.credits_remaining) == (5, 995)
+    assert got.report.requested == 5
+
+
+# ── report ──────────────────────────────────────────────────────────────
+
+
+def test_report_fields_are_pinned() -> None:
+    import dataclasses
+
+    assert [f.name for f in dataclasses.fields(LexAPICallReport)] == [
+        "requested",
+        "returned",
+        "as_of",
+        "withheld",
+        "kept_labelled",
+        "dropped",
+        "uncitable",
+        "filtered_out",
+        "withheld_not_emitted",
+        "returned_withheld",
+        "duplicates",
+        "truncated",
+        "units_charged",
+        "credits_remaining",
+        "hint",
+    ]
+    assert LexAPICallReport.__dataclass_params__.frozen  # type: ignore[attr-defined]
+
+
+def test_report_counts() -> None:
+    retriever, _ = leg_retriever("legislation.mixed.json", as_of=AS_OF, similarity_top_k=8)
+    report = retriever.retrieve_with_result("q").report
+    assert report == LexAPICallReport(
+        requested=8,
+        returned=3,
+        as_of=AS_OF,
+        withheld=1,
+        kept_labelled=0,
+        dropped=0,
+        uncitable=0,
+        filtered_out=0,
+        withheld_not_emitted=0,
+        returned_withheld=1,
+        duplicates=0,
+        truncated=0,
+        units_charged=9,
+        credits_remaining=991,
+        hint=None,
+    )
+    hidden, _ = leg_retriever("legislation.mixed.json", as_of=AS_OF, emit_withheld=False)
+    report = hidden.retrieve_with_result("q").report
+    assert (report.returned, report.withheld, report.withheld_not_emitted) == (2, 1, 1)
+    assert report.returned_withheld == 0
+
+
+def test_unknown_constructor_arguments_raise() -> None:
+    client, _ = make_client({})
+    with pytest.raises(TypeError):
+        LexAPILegislationRetriever(client, k=3)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        LexAPICaseLawRetriever(client, hyde=True)  # type: ignore[call-arg]
+
+
+def test_async_client_is_built_lazily() -> None:
+    retriever = LexAPILegislationRetriever(api_key=SECRET, base_url=LOOPBACK)
+    assert retriever._clients._async is None
+    assert retriever._clients.async_ is not None
+    assert SECRET not in repr(retriever._clients._key)

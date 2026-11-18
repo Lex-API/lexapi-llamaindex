@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import subprocess
@@ -54,18 +55,33 @@ def tools_by_name(spec: LexAPIToolSpec) -> dict[str, FunctionTool]:
 
 SEARCH_DOC = "Search EU legislation by meaning; returns matching articles, each with its citation."
 READ_DOC = "Read an EU document by its CELEX number: one article, or every article."
-DATE_DOC = "The version of an EU act that LexAPI lists for a date, and optionally one provision."
-PARAM_DOCS = {
-    "query": "What to look for, in plain language.",
-    "as_of": (
-        "Optional date, YYYY-MM-DD. Each article is then given in the version LexAPI lists "
-        "for that date; when that could not be established the article is returned as a "
+DATE_DOC = (
+    "The version of an EU act that LexAPI lists for a date, and optionally one provision. "
+    "When LexAPI could not establish the version for that date, the answer is a notice "
+    "without text, with the reason."
+)
+AS_OF_LEAD = (
+    "Optional date, YYYY-MM-DD. Each article is then given in the version LexAPI lists for "
+    "that date; "
+)
+POLICY_SENTENCES = {
+    "withhold": (
+        "an article whose version for that date could not be established is returned as a "
         "notice without text, with the reason."
     ),
+    "drop": "articles whose version for that date could not be established are left out.",
+    "keep_labelled": (
+        "an article whose version for that date could not be established is returned with "
+        "its latest indexed text, labelled as not established for that date."
+    ),
+}
+PARAM_DOCS: dict[str, str | None] = {
+    "query": "What to look for, in plain language.",
+    "as_of": None,
     "celex": None,
     "article": (
-        "Optional article to read, e.g. art_17 or 17. Without it every article of the "
-        "document is returned, which can be long."
+        "Optional article to read, e.g. art_17 or 17. Without it the articles of the "
+        "document are returned up to a size limit; the rest are listed by reference."
     ),
     "language": "Optional language code of the text, e.g. en, de, fr.",
     "date": "The date, YYYY-MM-DD.",
@@ -74,26 +90,41 @@ PARAM_DOCS = {
     ),
 }
 
-EXPECTED_TOOLS = {
-    "lexapi_search_legislation": (
-        "(query: str, as_of: str | None = None) -> str",
-        SEARCH_DOC,
-        {"query": "string", "as_of": None},
-        ["query"],
-    ),
+SIGNATURES = {
+    "lexapi_search_legislation": "(query: str, as_of: str | None = None) -> str",
     "lexapi_read_document": (
-        "(celex: str, article: str | None = None, language: str | None = None) -> str",
-        READ_DOC,
-        {"celex": "string", "article": None, "language": None},
-        ["celex"],
+        "(celex: str, article: str | None = None, language: str | None = None) -> str"
     ),
     "lexapi_law_on_date": (
-        "(celex: str, date: str, provision: str | None = None, language: str | None = None) -> str",
-        DATE_DOC,
-        {"celex": "string", "date": "string", "provision": None, "language": None},
-        ["celex", "date"],
+        "(celex: str, date: str, provision: str | None = None, language: str | None = None) -> str"
     ),
 }
+
+
+def expected_tools(policy: str) -> dict[str, tuple[str, str, dict[str, str | None], list[str]]]:
+    return {
+        "lexapi_search_legislation": (
+            SIGNATURES["lexapi_search_legislation"],
+            f"{SEARCH_DOC} With as_of, {POLICY_SENTENCES[policy]}",
+            {"query": "string", "as_of": None},
+            ["query"],
+        ),
+        "lexapi_read_document": (
+            SIGNATURES["lexapi_read_document"],
+            READ_DOC,
+            {"celex": "string", "article": None, "language": None},
+            ["celex"],
+        ),
+        "lexapi_law_on_date": (
+            SIGNATURES["lexapi_law_on_date"],
+            DATE_DOC,
+            {"celex": "string", "date": "string", "provision": None, "language": None},
+            ["celex", "date"],
+        ),
+    }
+
+
+EXPECTED_TOOLS = expected_tools("withhold")
 
 
 def test_spec_derives_from_base_tool_spec() -> None:
@@ -108,11 +139,13 @@ def test_spec_functions_are_pinned() -> None:
     ]
 
 
-def test_tool_names_descriptions_and_signatures_are_pinned() -> None:
-    spec, _ = spec_for({})
+@pytest.mark.parametrize("policy", ["withhold", "drop", "keep_labelled"])
+def test_tool_names_descriptions_and_signatures_are_pinned(policy: Any) -> None:
+    spec, _ = spec_for({}, unresolved=policy)
     tools = tools_by_name(spec)
-    assert list(tools) == list(EXPECTED_TOOLS)
-    for name, (signature, doc, props, required) in EXPECTED_TOOLS.items():
+    expected = expected_tools(policy)
+    assert list(tools) == list(expected)
+    for name, (signature, doc, props, required) in expected.items():
         tool = tools[name]
         assert str(inspect.signature(getattr(spec, name))) == signature
         assert str(inspect.signature(getattr(spec, "a" + name))) == signature
@@ -122,7 +155,9 @@ def test_tool_names_descriptions_and_signatures_are_pinned() -> None:
         assert list(params["properties"]) == list(props)
         for key, kind in props.items():
             schema = params["properties"][key]
-            if PARAM_DOCS[key] is not None:
+            if key == "as_of":
+                assert schema["description"] == AS_OF_LEAD + POLICY_SENTENCES[policy]
+            elif PARAM_DOCS[key] is not None:
                 assert schema["description"] == PARAM_DOCS[key]
             else:
                 assert schema["description"].startswith("CELEX number of the ")
@@ -145,9 +180,13 @@ def test_every_tool_has_a_real_async_variant() -> None:
         assert not inspect.iscoroutinefunction(getattr(spec, name))
 
 
-def test_descriptions_make_no_compliance_or_advice_claims() -> None:
-    spec, _ = spec_for({})
-    text = " ".join(t.metadata.description for t in spec.to_tool_list()).lower()
+@pytest.mark.parametrize("policy", ["withhold", "drop", "keep_labelled"])
+def test_descriptions_make_no_compliance_or_advice_claims(policy: Any) -> None:
+    spec, _ = spec_for({}, unresolved=policy)
+    text = " ".join(
+        (t.metadata.description or "") + json.dumps(t.metadata.get_parameters_dict())
+        for t in spec.to_tool_list()
+    ).lower()
     for word in ("complian", "legal advice", "in force", "guarantee", "accurate", "official"):
         assert word not in text
 
@@ -282,11 +321,12 @@ def test_law_on_date_resolved_names_the_act_to_cite() -> None:
     assert "version for 2099-06-01: 02099R0001-20990101" in out
 
 
-def test_law_on_date_unresolved_drop() -> None:
-    spec, _ = spec_for({ASOF: fixture_route("as-of.unresolved.json")}, unresolved="drop")
+@pytest.mark.parametrize("policy", ["withhold", "drop", "keep_labelled"])
+def test_law_on_date_always_withholds(policy: Any) -> None:
+    spec, _ = spec_for({ASOF: fixture_route("as-of.unresolved.json")}, unresolved=policy)
     out = spec.lexapi_law_on_date("32099R0001", AS_OF, provision="art_17")
-    assert out.startswith("LexAPI returned no answer for CELEX 32099R0001.")
-    assert "1 hit(s) left out" in out
+    assert out.startswith("[No text: CELEX 32099R0001 art_17 is not established")
+    assert "amendment_not_consolidated" in out
 
 
 # ── errors ──────────────────────────────────────────────────────────────
@@ -533,3 +573,182 @@ def test_search_output_never_carries_unresolved_text(spec_list: list[str], polic
     for n, kind in enumerate(spec_list):
         if kind == "resolved":
             assert f"TXT{n}Q" in out
+
+
+# ── parity details: error text, read budget, de-dup, report ────────────
+
+
+@pytest.mark.parametrize(
+    ("fixture", "status", "headers", "expected"),
+    [
+        (
+            "error.402.json",
+            402,
+            {},
+            "LexAPI error CREDITS_EXHAUSTED (HTTP 402): Monthly credit pool exhausted. "
+            "Credits reset at 2099-07-01T00:00:00.000Z.",
+        ),
+        (
+            "error.403-past-due.json",
+            403,
+            {},
+            "LexAPI error PAYMENT_PAST_DUE (HTTP 403): Payment past due. "
+            "Billing: https://lex-api.com/dashboard#billing",
+        ),
+        (
+            "error.429.json",
+            429,
+            {"Retry-After": "30"},
+            "LexAPI error RATE_LIMITED (HTTP 429): Rate limit exceeded. Retry after 30 s.",
+        ),
+        ("error.401.json", 401, {}, "LexAPI error UNAUTHORIZED (HTTP 401): Invalid API key."),
+    ],
+)
+def test_error_text_is_exact(
+    fixture: str, status: int, headers: dict[str, str], expected: str
+) -> None:
+    spec, _ = spec_for(error_routes(fixture, status, headers))
+    with pytest.raises(LexAPIToolError) as info:
+        spec.lexapi_search_legislation("q")
+    assert str(info.value) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "rendered"),
+    [("Stop.", "Stop."), ("Why?", "Why?"), ("Wow!", "Wow!"), ("Plain", "Plain.")],
+)
+def test_error_period_only_when_missing(message: str, rendered: str) -> None:
+    error = lexapi.LexAPIError(message, code="X", status=400)
+    assert str(LexAPIToolError.from_sdk(error)) == f"LexAPI error X (HTTP 400): {rendered}"
+
+
+def test_short_key_shapes_are_masked_too() -> None:
+    error = lexapi.LexAPIError("bad lex_a-b_C", code="X", status=401)
+    assert str(LexAPIToolError.from_sdk(error)) == "LexAPI error X (HTTP 401): bad lex_***."
+
+
+def long_document(articles: int, size: int) -> dict[str, Any]:
+    body: dict[str, Any] = load_fixture("document.read.json")
+    body["document"]["content"]["articles"] = [
+        {"id": f"art_{n}", "number": f"Article {n}", "content": ("w" * 9 + " ") * (size // 10)}
+        for n in range(1, articles + 1)
+    ]
+    return body
+
+
+def test_read_document_lists_what_does_not_fit() -> None:
+    spec, _ = spec_for({DOC: Route(long_document(5, 300))}, max_chars=1000)
+    out = spec.lexapi_read_document("32099R0001")
+    shown = out.count("Source: CELEX 32099R0001")
+    assert 1 <= shown < 5
+    refs = ", ".join(f"art_{n}" for n in range(shown + 1, 6))
+    assert out.endswith(
+        f"\n\n[Not shown: {5 - shown} more article(s) of CELEX 32099R0001: {refs}. "
+        "Read one with the article argument.]"
+    )
+    assert len(out.rsplit("\n\n[Not shown", 1)[0]) <= 1000
+
+
+def test_read_document_cuts_one_long_article() -> None:
+    spec, _ = spec_for({DOC: Route(long_document(1, 5000))}, max_chars=1000)
+    out = spec.lexapi_read_document("32099R0001", article="art_1")
+    assert "\n[Text cut by llama-index-tools-lexapi: " in out
+    assert "characters shown. The full text is at the source.]\nSource: CELEX 32099R0001" in out
+
+
+def test_read_document_default_budget_is_20000() -> None:
+    spec, _ = spec_for({DOC: Route(long_document(30, 1000))})
+    out = spec.lexapi_read_document("32099R0001")
+    assert "[Not shown: " in out
+    assert len(out.rsplit("\n\n[Not shown", 1)[0]) <= 20_000
+    assert "max_chars=20000" in repr(spec)
+
+
+@pytest.mark.parametrize("bad", [199, 0, True])
+def test_read_max_chars_is_validated(bad: Any) -> None:
+    client, _ = make_client({})
+    with pytest.raises(ValueError, match="max_chars"):
+        LexAPIToolSpec(client, max_chars=bad)
+
+
+def test_search_output_is_de_duplicated_by_rank() -> None:
+    body = load_fixture("legislation.unresolved.json")
+    first = dict(body["results"][0])
+    second = dict(first, asOfResolved=True, text="RESOLVED-TWIN")
+    second.pop("asOfReason")
+    body["results"] = [first, second]
+    spec, _ = spec_for({LEG: Route(body)})
+    out = spec.lexapi_search_legislation("q", as_of=AS_OF)
+    assert out.count("Source:") == 1
+    assert "RESOLVED-TWIN" in out
+
+
+def test_tool_report_fields_and_counts() -> None:
+    import dataclasses
+
+    from llama_index.tools.lexapi import LexAPICallReport
+
+    assert [f.name for f in dataclasses.fields(LexAPICallReport)] == [
+        "requested",
+        "returned",
+        "as_of",
+        "withheld",
+        "kept_labelled",
+        "dropped",
+        "uncitable",
+        "filtered_out",
+        "withheld_not_emitted",
+        "returned_withheld",
+        "duplicates",
+        "truncated",
+        "units_charged",
+        "credits_remaining",
+        "hint",
+    ]
+    collector = _Collector(events=[])
+    root = get_dispatcher()
+    root.add_event_handler(collector)
+    try:
+        spec, _ = spec_for({LEG: fixture_route("legislation.mixed.json")}, similarity_top_k=7)
+        spec.lexapi_search_legislation("q", as_of=AS_OF)
+    finally:
+        root.event_handlers.remove(collector)
+    (event,) = [e for e in collector.events if isinstance(e, LexAPIToolEvent)]
+    assert event.report == LexAPICallReport(
+        requested=7,
+        returned=3,
+        as_of=AS_OF,
+        withheld=1,
+        kept_labelled=0,
+        dropped=0,
+        uncitable=0,
+        filtered_out=0,
+        withheld_not_emitted=0,
+        returned_withheld=1,
+        duplicates=0,
+        truncated=0,
+        units_charged=9,
+        credits_remaining=991,
+        hint=None,
+    )
+
+
+def test_unknown_constructor_arguments_raise() -> None:
+    client, _ = make_client({})
+    with pytest.raises(TypeError):
+        LexAPIToolSpec(client, k=3)  # type: ignore[call-arg]
+
+
+def test_async_client_is_built_lazily_and_closable() -> None:
+    spec = LexAPIToolSpec(api_key=SECRET, base_url=LOOPBACK)
+    assert spec._clients._async is None
+    assert spec._clients.async_ is not None
+    asyncio.run(spec.aclose())
+    spec.close()
+
+
+def test_passed_clients_are_never_closed() -> None:
+    spec, _ = spec_for({LEG: fixture_route("legislation.empty.json")})
+    spec.close()
+    asyncio.run(spec.aclose())
+    assert spec.lexapi_search_legislation("q") == "LexAPI returned no matching articles."

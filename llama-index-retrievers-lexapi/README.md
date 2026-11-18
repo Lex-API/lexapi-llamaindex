@@ -24,7 +24,9 @@ from llama_index.retrievers.lexapi import LexAPILegislationRetriever
 
 retriever = LexAPILegislationRetriever(similarity_top_k=5)
 for item in retriever.retrieve("right to erasure of personal data"):
-    print(item.score, item.node.metadata["citation"])
+    meta = item.node.metadata
+    # cite_celex is absent for a consolidated text whose act LexAPI did not name.
+    print(item.score, meta.get("cite_celex"), meta["citation"])
     print(item.node.get_content())
 ```
 
@@ -48,8 +50,8 @@ nodes = await retriever.aretrieve("own funds requirements")
 
 `retrieve` uses the sync client and `aretrieve` the async one. With only a
 sync client, `aretrieve` runs it in a worker thread. A client you pass in is
-never closed by the retriever; clients it builds from a key are closed by
-`close()` / `await aclose()`.
+never closed by the retriever. Clients it builds from a key (the async one
+on first async use) are closed by `close()` / `await aclose()`.
 
 ## Nodes
 
@@ -95,6 +97,8 @@ retriever = LexAPILegislationRetriever(as_of="2019-06-01")
   latest indexed text is kept, labelled as not established for the date.
 - Withheld nodes have `metadata["text_withheld"] == True`. Do not index or
   embed them; `emit_withheld=False` leaves them out of the results.
+- The date is set per retriever. LlamaIndex's `retrieve()` takes only the
+  query, so for another date build another retriever.
 
 ## Restricting to one act
 
@@ -105,10 +109,11 @@ It never asks for more hits to make up the number.
 
 ## Case law
 
-`LexAPICaseLawRetriever` asks for the full text of each decision
+`LexAPICaseLawRetriever` always asks for the full text of each decision
 (`include_text=True`). The text of a node is the whole decision, which can
-be long; `max_chars=N` cuts it at a paragraph break within `N` characters
-and marks the cut. The default is the whole decision. The search snippet and
+be long; `max_chars=N` (at least 200) cuts it at the last blank line, line
+break or space within `N` characters and marks the cut. The default is the
+whole decision. The search snippet and
 the machine-written summary are never used as text. Filters: `court`,
 `date_from`, `date_to`.
 
@@ -119,22 +124,33 @@ costs 5 credits; with `as_of`, each version LexAPI does not hold is fetched
 (up to 3 per request by default) at 0-5 credits each. A case-law search
 costs 5 credits. See the LexAPI API reference for the current prices.
 
-What a call cost is reported per call, never stored on the retriever:
+What a call did is reported per call, never stored on the retriever:
 
 ```python
-nodes, result = retriever.retrieve_with_result("right to erasure")
-print(result.units_charged, result.credits_remaining, result.withheld)
+nodes, report, result = retriever.retrieve_with_result("right to erasure")
+print(report.requested, report.returned, report.units_charged, report.credits_remaining)
 ```
 
-`result` is the call's `lexapi.passages.PassageResult`. Inside a query
-engine, subscribe an instrumentation event handler to
-`LexAPIRetrievalEvent`, which carries the same result for every retrieval.
+`report` is a `LexAPICallReport`: `requested`, `returned`, `as_of`, the
+core's counters `withheld`, `kept_labelled`, `dropped`, `uncitable` and
+`filtered_out` (counted before de-duplication), `withheld_not_emitted`,
+`returned_withheld`, `duplicates`, `truncated`, `units_charged`,
+`credits_remaining` and `hint`. `result` is the call's
+`lexapi.passages.PassageResult`. Inside a query engine, subscribe an
+instrumentation event handler to `LexAPIRetrievalEvent`, which carries both
+for every retrieval.
+
+Two hits with the same node id are merged: the first position is kept, and
+a later hit replaces the earlier one only when it carries more (a text over
+a labelled latest text over a notice).
 
 ## Errors
 
-Errors are raised, never turned into an empty result: an empty list means
-the search returned no hits. The SDK's exceptions propagate unchanged, for
-example `lexapi.CreditsExhaustedError` (402), `lexapi.PaymentPastDueError`
+An error is never turned into an empty list. A result can be empty when the
+search had no hits, when `celex` filtered every hit out, when
+`unresolved="drop"` left every hit out, when `emit_withheld=False` left out
+withheld hits, or when the API sent hits without a CELEX number (counted in
+`report.uncitable`). The SDK's exceptions propagate unchanged, for example `lexapi.CreditsExhaustedError` (402), `lexapi.PaymentPastDueError`
 (403), `lexapi.RateLimitedError` (429) and `lexapi.AuthenticationError`
 (401).
 

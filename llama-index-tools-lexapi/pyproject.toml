@@ -45,7 +45,7 @@ dev = [
     "ruff==0.17.5",
     "mypy==2.4.1",
     "build>=1.2",
-    "twine>=6.1",
+    "twine>=7.0",
 ]
 
 [tool.hatch.metadata]
@@ -82,7 +82,7 @@ python_version = "3.11"
 namespace_packages = true
 explicit_package_bases = true
 mypy_path = ".:../testing"
-files = ["llama_index", "tests", "../testing/lexapi_offline.py"]
+files = ["llama_index", "tests", "../testing/lexapi_offline.py", "../testing/readme_runner.py"]
 
 [[tool.mypy.overrides]]
 # llama_index.core re-exports names without __all__ (e.g. get_dispatcher).

@@ -41,8 +41,8 @@ MUTANTS = [
     Mutant(
         "node text bypasses the core (raw text)",
         RET_NODES,
-        "return passages.format_passage(shown)",
-        'return shown.text or ""',
+        "        return passages.format_passage(passage)",
+        '        return passage.text or ""',
     ),
     Mutant(
         "as_of not passed to from_legislation_search",
@@ -68,16 +68,20 @@ MUTANTS = [
     Mutant(
         "hand-built metadata",
         RET_NODES,
-        "    metadata = passage.metadata()",
+        "    metadata = (metadata_from or passage).metadata()",
         '    metadata = {"celex": passage.celex, "citation": passages.format_citation(passage)}',
     ),
     Mutant(
         "over-asking when celex is set",
         RET_BASE,
-        '            "limit": self._similarity_top_k,\n            "include_text": True,',
+        '            "limit": self._similarity_top_k,\n            "include_text": True,\n'
+        '            "language": self._language,\n            "min_score": self._min_score,\n'
+        '            "as_of"',
         '            "limit": min(50, self._similarity_top_k * 4)'
         " if self._celex else self._similarity_top_k,\n"
-        '            "include_text": True,',
+        '            "include_text": True,\n'
+        '            "language": self._language,\n            "min_score": self._min_score,\n'
+        '            "as_of"',
     ),
     Mutant(
         "case-law snippet used as text",
@@ -117,8 +121,10 @@ MUTANTS = [
     Mutant(
         "legislation search without include_text",
         RET_BASE,
-        '            "limit": self._similarity_top_k,\n            "include_text": True,',
-        '            "limit": self._similarity_top_k,\n            "include_text": False,',
+        '            "include_text": True,\n            "language": self._language,\n'
+        '            "min_score": self._min_score,\n            "as_of"',
+        '            "include_text": False,\n            "language": self._language,\n'
+        '            "min_score": self._min_score,\n            "as_of"',
     ),
     Mutant(
         "emit_withheld ignored",
@@ -135,20 +141,21 @@ MUTANTS = [
     Mutant(
         "last result stored on the instance",
         RET_BASE,
-        "            holder.setdefault(id(self), result)",
-        "            holder.setdefault(id(self), result)\n        self._last_result = result",
+        "            holder.setdefault(id(self), (report, result))",
+        "            holder.setdefault(id(self), (report, result))\n"
+        "        self._last_report = report",
     ),
     Mutant(
         "duplicate id: later passage wins",
         RET_NODES,
-        "if current is None or (passage.has_text and not current.has_text):",
-        "if True:",
+        "        if _rank(passage) > _rank(current):",
+        "        if True:",
     ),
     Mutant(
         "truncation not marked",
         RET_NODES,
-        'return dataclasses.replace(passage, text=f"{kept}\\n{marker}")',
-        "return dataclasses.replace(passage, text=kept)",
+        'return dataclasses.replace(passage, text=f"{kept}\\n{note}"), True',
+        "return dataclasses.replace(passage, text=kept), True",
     ),
     Mutant(
         "case law sends hyde",
@@ -181,8 +188,8 @@ MUTANTS = [
     Mutant(
         "key masking removed",
         TOOLS_BASE,
-        '_KEY_PATTERN.sub("lex_***", message),',
-        "message,",
+        '    return _KEY_PATTERN.sub("lex_***", text)',
+        "    return text",
     ),
     Mutant(
         "tool search: as_of not passed to the core",
@@ -193,26 +200,70 @@ MUTANTS = [
     Mutant(
         "tool output bypasses format_passage",
         TOOLS_BASE,
-        "blocks = [passages.format_passage(p) for p in result.passages]",
-        "blocks = [p.content() for p in result.passages]",
+        "        else:\n            block = passages.format_passage(candidate)",
+        "        else:\n            block = candidate.content()",
     ),
     Mutant(
         "error code missing from tool error",
         TOOLS_BASE,
-        'message = f"LexAPI error {error.code}{status}: {error.message}"',
-        'message = f"LexAPI error{status}: {error.message}"',
+        'message = f"LexAPI error {error.code}{status}: {api_message}"',
+        'message = f"LexAPI error{status}: {api_message}"',
     ),
     Mutant(
         "law on a date ignores the unresolved policy",
         TOOLS_BASE,
-        "response, provision=provision, unresolved=self._unresolved",
-        "response, provision=provision",
+        '            response, provision=provision, unresolved="withhold"',
+        "            response, provision=provision, unresolved=self._unresolved",
     ),
     Mutant(
         "tool search over-asks",
         TOOLS_BASE,
         '            "limit": self._similarity_top_k,',
         '            "limit": self._similarity_top_k * 2,',
+    ),
+    Mutant(
+        "case law without include_text",
+        RET_BASE,
+        '            "include_text": True,\n            "language": self._language,\n'
+        '            "min_score": self._min_score,\n            "filters"',
+        '            "include_text": False,\n            "language": self._language,\n'
+        '            "min_score": self._min_score,\n            "filters"',
+    ),
+    Mutant(
+        "report counts passages before de-dup as returned",
+        RET_NODES,
+        "        returned=len(nodes),",
+        "        returned=len(result.passages),",
+    ),
+    Mutant(
+        "async client built eagerly",
+        f"{RET}/llama_index/retrievers/lexapi/_client.py",
+        "        self._async = None\n        self._owned = True",
+        "        self._async = AsyncLexAPI(api_key, **self._kwargs)\n        self._owned = True",
+    ),
+    Mutant(
+        "billing URL missing from the past-due error",
+        TOOLS_BASE,
+        '            message += f" Billing: {error.billing_url}"',
+        "            pass",
+    ),
+    Mutant(
+        "period rule ignored",
+        TOOLS_BASE,
+        '        if api_message and api_message[-1] not in ".!?":',
+        "        if api_message:",
+    ),
+    Mutant(
+        "description ignores the unresolved policy",
+        TOOLS_BASE,
+        "tool_metadata(self._unresolved)",
+        "tool_metadata()",
+    ),
+    Mutant(
+        "read budget ignored",
+        TOOLS_BASE,
+        "            max_chars=self._max_chars,",
+        "            max_chars=None,",
     ),
     Mutant(
         "tool description claims more than the core",
@@ -246,6 +297,10 @@ def run(mutant: Mutant, python: str) -> bool:
 
 def main() -> int:
     python = sys.executable
+    for mutant in MUTANTS:
+        count = (ROOT / mutant.path).read_text(encoding="utf-8").count(mutant.old)
+        if count != 1:
+            raise SystemExit(f"mutant {mutant.name!r}: anchor found {count} times")
     survived = 0
     for mutant in MUTANTS:
         caught = run(mutant, python)

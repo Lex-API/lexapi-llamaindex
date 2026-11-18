@@ -22,7 +22,7 @@ from lexapi import AsyncLexAPI, LexAPI, passages
 from lexapi.models import SemanticLegislationResponse, SemanticSearchResponse
 from lexapi.passages import PassageResult, UnresolvedPolicy
 from llama_index.retrievers.lexapi._client import Clients
-from llama_index.retrievers.lexapi._nodes import passages_to_nodes
+from llama_index.retrievers.lexapi._nodes import MIN_MAX_CHARS, LexAPICallReport, build
 
 dispatcher = instrument.get_dispatcher(__name__)
 
@@ -36,17 +36,18 @@ DateLike = dt.date | str
 
 
 class LexAPIRetrieval(NamedTuple):
-    """What one retrieval returned: the nodes, and the
-    :class:`lexapi.passages.PassageResult` they were built from (credits
-    charged and left, withheld/dropped/filtered counts, the API's hint)."""
+    """What one retrieval returned: the nodes, the call's
+    :class:`LexAPICallReport`, and the
+    :class:`lexapi.passages.PassageResult` the nodes were built from."""
 
     nodes: list[NodeWithScore]
+    report: LexAPICallReport
     result: PassageResult
 
 
 class LexAPIRetrievalEvent(BaseEvent):
-    """Dispatched once per retrieval, with the
-    :class:`~lexapi.passages.PassageResult` of that call.
+    """Dispatched once per retrieval, with that call's
+    :class:`LexAPICallReport` and :class:`~lexapi.passages.PassageResult`.
 
     Subscribe with an instrumentation event handler to read the credits a
     retrieval cost when the retriever runs inside a query engine. The event
@@ -55,6 +56,7 @@ class LexAPIRetrievalEvent(BaseEvent):
 
     retriever: str
     query: str
+    report: LexAPICallReport
     result: PassageResult
 
     @classmethod
@@ -65,7 +67,8 @@ class LexAPIRetrievalEvent(BaseEvent):
 # Per-call holder for retrieve_with_result(): a fresh dict for each call,
 # read back by that call only. Context variables are per thread and per
 # asyncio task, so concurrent calls never see each other's result.
-_RESULT_HOLDER: contextvars.ContextVar[dict[int, PassageResult] | None] = contextvars.ContextVar(
+_Captured = tuple[LexAPICallReport, PassageResult]
+_RESULT_HOLDER: contextvars.ContextVar[dict[int, _Captured] | None] = contextvars.ContextVar(
     "lexapi_retrieval_result", default=None
 )
 
@@ -79,8 +82,10 @@ def _check_top_k(value: int, maximum: int) -> int:
 def _check_max_chars(value: int | None) -> int | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"max_chars must be a positive integer or None; got {value!r}")
+    if isinstance(value, bool) or not isinstance(value, int) or value < MIN_MAX_CHARS:
+        raise ValueError(
+            f"max_chars must be an integer of at least {MIN_MAX_CHARS}, or None; got {value!r}"
+        )
     return value
 
 
@@ -113,7 +118,7 @@ class _LexAPIRetriever(BaseRetriever):
     async def _asearch(self, client: AsyncLexAPI, query: str) -> PassageResult:
         raise NotImplementedError
 
-    def _to_nodes(self, result: PassageResult) -> list[NodeWithScore]:
+    def _build(self, result: PassageResult) -> tuple[list[NodeWithScore], LexAPICallReport]:
         raise NotImplementedError
 
     # ── BaseRetriever ───────────────────────────────────────────────────
@@ -133,43 +138,50 @@ class _LexAPIRetriever(BaseRetriever):
         return self._finish(query_bundle, result)
 
     def _finish(self, query_bundle: QueryBundle, result: PassageResult) -> list[NodeWithScore]:
+        nodes, report = self._build(result)
         holder = _RESULT_HOLDER.get()
         if holder is not None:
-            holder.setdefault(id(self), result)
+            holder.setdefault(id(self), (report, result))
         dispatcher.event(
             LexAPIRetrievalEvent(
-                retriever=type(self).__name__, query=query_bundle.query_str, result=result
+                retriever=type(self).__name__,
+                query=query_bundle.query_str,
+                report=report,
+                result=result,
             )
         )
-        return self._to_nodes(result)
+        return nodes
 
     # ── public extras ───────────────────────────────────────────────────
 
     def retrieve_with_result(self, str_or_query_bundle: QueryType) -> LexAPIRetrieval:
         """:meth:`retrieve`, also returning the call's
-        :class:`~lexapi.passages.PassageResult` (credits charged and left,
-        withheld/dropped/filtered counts, hint).
+        :class:`LexAPICallReport` (hits requested and nodes returned, credits
+        charged and left, withheld/dropped/filtered/duplicate counts, hint)
+        and :class:`~lexapi.passages.PassageResult`.
 
         Safe under concurrency: the result is carried per call, not stored
         on the retriever.
         """
-        holder: dict[int, PassageResult] = {}
+        holder: dict[int, _Captured] = {}
         token = _RESULT_HOLDER.set(holder)
         try:
             nodes = self.retrieve(str_or_query_bundle)
         finally:
             _RESULT_HOLDER.reset(token)
-        return LexAPIRetrieval(nodes, holder[id(self)])
+        report, result = holder[id(self)]
+        return LexAPIRetrieval(nodes, report, result)
 
     async def aretrieve_with_result(self, str_or_query_bundle: QueryType) -> LexAPIRetrieval:
         """Async :meth:`retrieve_with_result`."""
-        holder: dict[int, PassageResult] = {}
+        holder: dict[int, _Captured] = {}
         token = _RESULT_HOLDER.set(holder)
         try:
             nodes = await self.aretrieve(str_or_query_bundle)
         finally:
             _RESULT_HOLDER.reset(token)
-        return LexAPIRetrieval(nodes, holder[id(self)])
+        report, result = holder[id(self)]
+        return LexAPIRetrieval(nodes, report, result)
 
     def close(self) -> None:
         """Close the sync client this retriever built from a key. A client
@@ -196,8 +208,9 @@ class LexAPILegislationRetriever(_LexAPIRetriever):
         async_client: a :class:`lexapi.AsyncLexAPI` for :meth:`aretrieve`.
             With only ``client``, async calls run it in a worker thread.
         api_key: build the clients from this key instead (default: the
-            ``LEXAPI_API_KEY`` environment variable). Not stored by the
-            retriever.
+            ``LEXAPI_API_KEY`` environment variable). The sync client is
+            built at construction, the async client on first async use; close
+            them with :meth:`close` / :meth:`aclose`.
         base_url: base URL for clients built from a key (default: the SDK's).
         similarity_top_k: number of hits requested from the API (1-50; the
             plan can allow fewer). The result can hold fewer nodes, and
@@ -216,8 +229,8 @@ class LexAPILegislationRetriever(_LexAPIRetriever):
             text is a notice with the reason and no text; ``"drop"`` leaves it
             out; ``"keep_labelled"`` keeps the latest indexed text, labelled
             as not established for the date.
-        emit_withheld: ``False`` leaves withheld hits out of the nodes (they
-            are still counted in the result). Withheld nodes carry
+        emit_withheld: ``False`` leaves withheld hits out of the nodes
+            (counted in ``report.withheld_not_emitted``). Withheld nodes carry
             ``metadata["text_withheld"] = True``; do not index or embed them.
         include_citation_in_text: ``True`` (default) puts the ``Source:``
             line in the node text, so the citation reaches the model in
@@ -303,9 +316,10 @@ class LexAPILegislationRetriever(_LexAPIRetriever):
             result = passages.restrict_to_celex(result, self._celex)
         return result
 
-    def _to_nodes(self, result: PassageResult) -> list[NodeWithScore]:
-        return passages_to_nodes(
-            result.passages,
+    def _build(self, result: PassageResult) -> tuple[list[NodeWithScore], LexAPICallReport]:
+        return build(
+            result,
+            requested=self._similarity_top_k,
             include_citation_in_text=self._include_citation_in_text,
             emit_withheld=self._emit_withheld,
         )
@@ -321,11 +335,11 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
     """Retrieve CJEU case law from LexAPI's semantic search, each decision
     with the citation it must be shown with.
 
-    The text of a node is the whole decision, as the API returns it with
-    ``include_text=True``; decisions are long. ``max_chars`` cuts it at a
+    The search is always sent with ``include_text=True``. The text of a node
+    is the whole decision; decisions are long. ``max_chars`` cuts it at a
     paragraph break and marks the cut. The snippet and the machine-written
-    summary are never used as text: with ``include_text=False`` a node holds
-    only a notice that no text was returned.
+    summary are never used as text: a hit the API sent without text becomes
+    a node holding only a notice that no text was returned.
 
     Args:
         client, async_client, api_key, base_url: as for
@@ -336,10 +350,10 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
         min_score: similarity floor sent to the API.
         court: keep to one court (sent as a search filter).
         date_from, date_to: decision-date range (sent as search filters).
-        include_text: ``True`` (default) asks for the full text of each
-            decision.
         max_chars: cut each decision's text to at most this many characters
-            (default ``None``: the whole decision).
+            (at least 200; default ``None``: the whole decision). The cut is
+            made at the last blank line, line break or space within the limit
+            and is marked in the text.
         include_citation_in_text: as for :class:`LexAPILegislationRetriever`.
         callback_manager, verbose: passed to ``BaseRetriever``.
     """
@@ -357,7 +371,6 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
         court: str | None = None,
         date_from: DateLike | None = None,
         date_to: DateLike | None = None,
-        include_text: bool = True,
         max_chars: int | None = None,
         include_citation_in_text: bool = True,
         callback_manager: CallbackManager | None = None,
@@ -368,7 +381,6 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
         self._min_score = min_score
         filters = {"court": court, "date_from": _iso(date_from), "date_to": _iso(date_to)}
         self._filters = {k: v for k, v in filters.items() if v is not None} or None
-        self._include_text = include_text
         self._max_chars = _check_max_chars(max_chars)
         self._include_citation_in_text = include_citation_in_text
         super().__init__(
@@ -388,7 +400,7 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
     def _request(self) -> dict[str, Any]:
         return {
             "limit": self._similarity_top_k,
-            "include_text": self._include_text,
+            "include_text": True,
             "language": self._language,
             "min_score": self._min_score,
             "filters": dict(self._filters) if self._filters else None,
@@ -405,9 +417,10 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
     def _convert(self, response: SemanticSearchResponse) -> PassageResult:
         return passages.from_case_law_search(response)
 
-    def _to_nodes(self, result: PassageResult) -> list[NodeWithScore]:
-        return passages_to_nodes(
-            result.passages,
+    def _build(self, result: PassageResult) -> tuple[list[NodeWithScore], LexAPICallReport]:
+        return build(
+            result,
+            requested=self._similarity_top_k,
             include_citation_in_text=self._include_citation_in_text,
             max_chars=self._max_chars,
         )
@@ -415,7 +428,7 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(similarity_top_k={self._similarity_top_k}, "
-            f"include_text={self._include_text!r}, max_chars={self._max_chars!r})"
+            f"max_chars={self._max_chars!r})"
         )
 
 
