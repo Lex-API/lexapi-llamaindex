@@ -168,15 +168,23 @@ def _check_language(value: object) -> None:
 
 
 def _check_document_shape(response: DocumentResponse) -> None:
-    """A read answer must carry ``document`` as an object, ``content`` as an
-    object or null, and ``content.articles`` as a list of objects."""
+    """A read answer must carry ``document`` as an object with a non-empty
+    ``celex`` string, ``content`` as an object or null, ``content.fullText``
+    (when present) as a string and ``content.articles`` as a list of
+    objects."""
     document = response.get("document")
     if not isinstance(document, dict):
+        raise LexAPIToolError.unreadable()
+    celex = document.get("celex")
+    if not isinstance(celex, str) or not celex.strip():
         raise LexAPIToolError.unreadable()
     content = document.get("content")
     if content is None:
         return
     if not isinstance(content, dict):
+        raise LexAPIToolError.unreadable()
+    full_text = content.get("fullText")
+    if full_text is not None and not isinstance(full_text, str):
         raise LexAPIToolError.unreadable()
     articles = content.get("articles")
     if articles is None:

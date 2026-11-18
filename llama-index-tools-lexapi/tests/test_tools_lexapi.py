@@ -1087,6 +1087,14 @@ READ_BAD = {
         "success": True,
         "document": {"celex": "32099R0001", "content": {"articles": ["x"]}},
     },
+    "document without celex": {"success": True, "document": {"title": "x", "content": None}},
+    "celex null": {"success": True, "document": {"celex": None, "content": None}},
+    "celex a number": {"success": True, "document": {"celex": 5, "content": None}},
+    "celex empty": {"success": True, "document": {"celex": "", "content": None}},
+    "fullText a number": {
+        "success": True,
+        "document": {"celex": "32099R0001", "content": {"fullText": 5}},
+    },
 }
 AS_OF_BAD = {
     "empty object": {},
@@ -1170,6 +1178,15 @@ def _document(**overrides: Any) -> dict[str, Any]:
         ),
         (_document(content={"fullText": "Whole text of a decision."}), "[1] Whole text"),
         (_document(content={"articles": []}), "LexAPI returned no text for CELEX 32099R0001."),
+        (
+            {"success": True, "document": {"celex": "32099R0001", "content": None}},
+            "LexAPI returned no text for CELEX 32099R0001.",
+        ),
+        (
+            _document(content={"articles": [{"number": "Article 1", "content": "Old style."}]}),
+            "[1] Old style.",
+        ),
+        (_document(title=None), "[1] "),
         (
             _document(
                 content={
@@ -1288,3 +1305,21 @@ def test_provision_forms_are_sent_as_given(provision: str) -> None:
     spec, requests = spec_for({ASOF: fixture_route("as-of.resolved.json")})
     spec.lexapi_legislation_as_of("32099R0001", AS_OF, provision=provision)
     assert json.loads(requests[0].content)["provision"] == provision
+
+
+def test_empty_as_of_document_is_caught_by_both_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty ``document`` string gives no passage: the shape check and the
+    no-passage backstop each raise the fixed text on their own."""
+    import llama_index.tools.lexapi.base as base
+
+    body = {"success": True, "document": "", "asOfResolved": False}
+    spec, _ = spec_for({ASOF: Route(body)})
+    with pytest.raises(LexAPIToolError) as info:
+        spec.lexapi_legislation_as_of("32099R0001", AS_OF)
+    assert str(info.value) == NO_STATUS
+    assert passages.from_legislation_as_of(LegislationAsOfResponse(body)).passages == ()
+    monkeypatch.setattr(base, "_check_as_of_shape", lambda response: None)
+    with pytest.raises(LexAPIToolError) as backstop:
+        spec.lexapi_legislation_as_of("32099R0001", AS_OF)
+    assert str(backstop.value) == NO_STATUS
+    assert_detached(backstop.value)

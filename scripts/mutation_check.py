@@ -396,6 +396,24 @@ MUTANTS = [
         "    if False:",
     ),
     Mutant(
+        "document celex not checked",
+        TOOLS_BASE,
+        "    if not isinstance(celex, str) or not celex.strip():",
+        "    if False:",
+    ),
+    Mutant(
+        "fullText type not checked",
+        TOOLS_BASE,
+        "    if full_text is not None and not isinstance(full_text, str):",
+        "    if False:",
+    ),
+    Mutant(
+        "as-of no-passage backstop removed",
+        TOOLS_BASE,
+        "        if not result.passages:\n",
+        "        if False:\n",
+    ),
+    Mutant(
         "articles not checked as objects",
         TOOLS_BASE,
         "not all(isinstance(a, dict) for a in articles)",
