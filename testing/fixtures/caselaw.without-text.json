@@ -1,0 +1,47 @@
+{
+  "success": true,
+  "searchType": "semantic",
+  "query": "synthetic",
+  "results": [
+    {
+      "case_id": "snapshot-1",
+      "score": 0.83,
+      "case_name": "Synthetic v Fixture",
+      "case_number": "C-999/99",
+      "ecli": "ECLI:EU:C:2099:1",
+      "court": "Court of Justice",
+      "decision_date": "2099-05-13",
+      "language": "en",
+      "summary": "[SYNTHETIC FIXTURE - not the text of the act] SUMMARYTOKEN machine-written summary",
+      "snippet": "[SYNTHETIC FIXTURE - not the text of the act] SNIPPETTOKEN case snippet",
+      "metadata": {
+        "celex_id": "62099CJ9901",
+        "document_type": "judgment",
+        "paragraph_number": 93
+      },
+      "provenance": {
+        "sourceUrl": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:62099CJ9901"
+      }
+    },
+    {
+      "case_id": "snapshot-2",
+      "score": 0.7,
+      "case_name": "Other v Synthetic",
+      "case_number": "C-998/99",
+      "ecli": "ECLI:EU:C:2099:2",
+      "court": "Court of Justice",
+      "decision_date": "2099-04-01",
+      "language": "en",
+      "summary": "[SYNTHETIC FIXTURE - not the text of the act] SUMMARYTOKEN second",
+      "snippet": "[SYNTHETIC FIXTURE - not the text of the act] SNIPPETTOKEN second",
+      "metadata": {
+        "celex_id": "62099CJ9902",
+        "document_type": "order"
+      }
+    }
+  ],
+  "credits": {
+    "operation_weight": 5,
+    "remaining": 995
+  }
+}

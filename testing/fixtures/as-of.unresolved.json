@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "document": "32099R0001",
+  "language": "en",
+  "asOf": "2099-06-01",
+  "asOfResolved": false,
+  "asOfReason": "amendment_not_consolidated",
+  "credits": {
+    "operation_weight": 1,
+    "remaining": 99
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "success": true,
+  "document": "32099R0001",
+  "language": "en",
+  "asOf": "2099-06-01",
+  "asOfResolved": true,
+  "asOfVersion": {
+    "celex": "02099R0001-20990101",
+    "kind": "consolidated",
+    "date": "2099-01-01",
+    "validUntil": "2099-12-31"
+  },
+  "consolidated": true,
+  "consolidatedAsOf": "2099-01-01",
+  "baseCelex": "32099R0001",
+  "consolidatedNote": "The act as amended, consolidated as of 2099-01-01; not the authentic text. Only the act as published in the Official Journal is authentic (32099R0001).",
+  "provenance": {
+    "sourceUrl": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02099R0001-20990101"
+  },
+  "credits": {
+    "operation_weight": 1,
+    "remaining": 99
+  }
+}

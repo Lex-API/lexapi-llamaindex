@@ -1,0 +1,11 @@
+{
+  "success": false,
+  "error": {
+    "code": "PAYMENT_PAST_DUE",
+    "message": "Payment past due",
+    "details": {
+      "accessEndedAt": "2099-06-02T09:00:00.000Z",
+      "billingUrl": "https://lex-api.com/dashboard#billing"
+    }
+  }
+}
