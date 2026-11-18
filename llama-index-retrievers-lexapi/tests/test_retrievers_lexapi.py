@@ -36,7 +36,7 @@ from llama_index.retrievers.lexapi import (
     LexAPIRetrievalEvent,
 )
 from llama_index.retrievers.lexapi._client import user_agent_suffix
-from llama_index.retrievers.lexapi._nodes import truncate
+from llama_index.retrievers.lexapi._nodes import cut_text, truncate
 
 LEG = "/legislation/semantic"
 CASE = "/search/semantic"
@@ -417,7 +417,7 @@ async def test_async_with_only_a_sync_client_runs_in_a_thread() -> None:
 def test_sync_with_only_an_async_client_says_so() -> None:
     aclient, _ = make_async_client({})
     retriever = LexAPILegislationRetriever(async_client=aclient)
-    with pytest.raises(TypeError, match="only an async_client"):
+    with pytest.raises(ValueError, match="only an async_client"):
         retriever.retrieve("q")
 
 
@@ -573,9 +573,11 @@ async def test_owned_async_client_cannot_reach_the_network() -> None:
 
 
 def test_passed_clients_are_not_closed() -> None:
-    retriever, _ = leg_retriever("legislation.empty.json")
+    client, _ = make_client({LEG: fixture_route("legislation.empty.json")})
+    retriever = LexAPILegislationRetriever(client)
     retriever.close()
-    assert retriever.retrieve("q") == []
+    assert not client._http.is_closed
+    assert LexAPILegislationRetriever(client).retrieve("q") == []
 
 
 # ── case law ────────────────────────────────────────────────────────────
@@ -703,9 +705,27 @@ def _passage(text: str | None) -> Any:
 )
 def test_truncation_rules(text: str, kept: str) -> None:
     cut, changed = truncate(_passage(text), 200)
-    total = len(text.lstrip())
+    total = len(text)
     assert changed
     assert cut.text == kept + "\n" + NOTE.format(kept=len(kept), total=total) + NOTE_END
+
+
+def test_cut_rule_example() -> None:
+    assert cut_text("aaaa bbbbb cccc", 10)[0].split("\n")[0] == "aaaa bbbbb"
+    assert cut_text("aaaa bbbbb cccc", 10)[0].endswith(
+        "[Text cut by llama-index-retrievers-lexapi: 10 of 15 characters shown. "
+        "The full text is at the source.]"
+    )
+
+
+def test_cut_rule_strips_and_returns_a_fitting_text() -> None:
+    assert cut_text("  \n short", 10) == ("short", False)
+
+
+def test_cut_rule_falls_early_when_the_only_break_is_near_the_start() -> None:
+    text = "Heading\n\n" + "x" * 500
+    kept = cut_text(text, 200)[0].split("\n")[0]
+    assert kept == "Heading"
 
 
 def test_truncation_never_shows_nothing() -> None:
@@ -792,10 +812,12 @@ def test_report_fields_are_pinned() -> None:
         "dropped",
         "uncitable",
         "filtered_out",
-        "withheld_not_emitted",
         "returned_withheld",
+        "returned_labelled",
+        "withheld_not_emitted",
         "duplicates",
         "truncated",
+        "not_shown",
         "units_charged",
         "credits_remaining",
         "hint",
@@ -815,10 +837,12 @@ def test_report_counts() -> None:
         dropped=0,
         uncitable=0,
         filtered_out=0,
-        withheld_not_emitted=0,
         returned_withheld=1,
+        returned_labelled=0,
+        withheld_not_emitted=0,
         duplicates=0,
         truncated=0,
+        not_shown=0,
         units_charged=9,
         credits_remaining=991,
         hint=None,
@@ -842,3 +866,114 @@ def test_async_client_is_built_lazily() -> None:
     assert retriever._clients._async is None
     assert retriever._clients.async_ is not None
     assert SECRET not in repr(retriever._clients._key)
+
+
+# ── dates, lifecycle, copying ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize("bad", ["2099-02-30", "2099-6-1", "01.06.2099", "", "2099-06-01T00:00", 7])
+def test_as_of_is_validated_before_any_request(bad: Any) -> None:
+    client, recorder = make_client({LEG: fixture_route("legislation.mixed.json")})
+    with pytest.raises(ValueError, match="as_of must be a date in the form YYYY-MM-DD"):
+        LexAPILegislationRetriever(client, as_of=bad)
+    assert recorder.requests == []
+
+
+def test_case_law_dates_are_validated() -> None:
+    client, _ = make_client({})
+    with pytest.raises(ValueError, match="date_from must be a date"):
+        LexAPICaseLawRetriever(client, date_from="2099-13-01")
+
+
+def test_context_managers_close_and_mark_closed() -> None:
+    with LexAPILegislationRetriever(api_key=SECRET, base_url=LOOPBACK) as retriever:
+        sync_http = retriever._clients._sync._http  # type: ignore[union-attr]
+    assert sync_http.is_closed
+    with pytest.raises(
+        RuntimeError, match=r"^LexAPILegislationRetriever is closed; create a new one\.$"
+    ):
+        retriever.retrieve("q")
+
+
+async def test_async_context_manager_closes_both_owned_clients() -> None:
+    async with LexAPICaseLawRetriever(api_key=SECRET, base_url=LOOPBACK) as retriever:
+        async_client = retriever._clients.async_
+        assert async_client is not None
+    assert async_client._http.is_closed
+    assert retriever._clients._sync._http.is_closed  # type: ignore[union-attr]
+    with pytest.raises(RuntimeError, match="LexAPICaseLawRetriever is closed"):
+        await retriever.aretrieve("q")
+
+
+async def test_passed_in_clients_survive_aclose() -> None:
+    client, _ = make_client({LEG: fixture_route("legislation.empty.json")})
+    aclient, _ = make_async_client({LEG: fixture_route("legislation.empty.json")})
+    retriever = LexAPILegislationRetriever(client, aclient)
+    await retriever.aclose()
+    assert not client._http.is_closed and not aclient._http.is_closed
+
+
+def test_retrievers_cannot_be_copied_or_pickled() -> None:
+    import copy
+    import pickle
+
+    retriever, _ = leg_retriever("legislation.empty.json")
+    message = "LexAPILegislationRetriever holds an open client and cannot be copied or pickled."
+    for attempt in (
+        lambda: pickle.dumps(retriever),
+        lambda: copy.copy(retriever),
+        lambda: copy.deepcopy(retriever),
+    ):
+        with pytest.raises(TypeError) as info:
+            attempt()
+        assert str(info.value) == message
+
+
+def test_result_holder_is_reset_after_each_call() -> None:
+    from llama_index.retrievers.lexapi.base import _RESULT_HOLDER
+
+    retriever, _ = leg_retriever("legislation.mixed.json", as_of=AS_OF)
+    assert _RESULT_HOLDER.get() is None
+    retriever.retrieve_with_result("q")
+    assert _RESULT_HOLDER.get() is None
+    failing_client, _ = make_client({LEG: fixture_route("error.402.json", 402)})
+    with pytest.raises(lexapi.CreditsExhaustedError):
+        LexAPILegislationRetriever(failing_client).retrieve_with_result("q")
+    assert _RESULT_HOLDER.get() is None
+
+
+async def test_result_holder_is_reset_after_each_async_call() -> None:
+    from llama_index.retrievers.lexapi.base import _RESULT_HOLDER
+
+    retriever, _ = leg_retriever("legislation.mixed.json", as_of=AS_OF)
+    await retriever.aretrieve_with_result("q")
+    assert _RESULT_HOLDER.get() is None
+
+
+# ── wrong-shape 200s: an error, never an empty result ─────────────────
+
+WRONG_SHAPES: dict[str, tuple[Any, type[Exception]]] = {
+    "results not a list": ({"success": True, "results": {"a": 1}}, lexapi.InvalidResponseError),
+    "empty body": ("", lexapi.InvalidResponseError),
+    "success false": (
+        {"success": False, "error": {"code": "UPSTREAM_ERROR", "message": "Upstream failed"}},
+        lexapi.UpstreamError,
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(WRONG_SHAPES))
+async def test_wrong_shape_200_raises_the_sdk_error(shape: str) -> None:
+    body, error = WRONG_SHAPES[shape]
+    routes = {LEG: Route(body), CASE: Route(body)}
+    client, _ = make_client(routes)
+    aclient, _ = make_async_client(routes)
+    for retriever in (
+        LexAPILegislationRetriever(client, aclient),
+        LexAPICaseLawRetriever(client, aclient),
+    ):
+        with pytest.raises(error) as info:
+            retriever.retrieve("q")
+        assert info.value.status == 200  # type: ignore[attr-defined]
+        with pytest.raises(error):
+            await retriever.aretrieve("q")

@@ -14,3 +14,6 @@
 - `retrieve_with_result` / `aretrieve_with_result` return the nodes, a
   `LexAPICallReport` and the `PassageResult`; `LexAPIRetrievalEvent`
   carries the same for each retrieval.
+- `as_of`, `date_from` and `date_to` are checked before any request.
+- `with` / `async with`, `close()` / `aclose()`; a closed retriever refuses
+  calls.

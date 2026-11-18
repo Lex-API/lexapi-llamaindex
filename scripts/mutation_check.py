@@ -154,8 +154,8 @@ MUTANTS = [
     Mutant(
         "truncation not marked",
         RET_NODES,
-        'return dataclasses.replace(passage, text=f"{kept}\\n{note}"), True',
-        "return dataclasses.replace(passage, text=kept), True",
+        '    return f"{kept}\\n{note}", True',
+        "    return kept, True",
     ),
     Mutant(
         "case law sends hyde",
@@ -175,51 +175,6 @@ MUTANTS = [
         RET_BASE,
         "        if self._celex is not None:\n            result = passages.restrict_to_celex",
         "        if False:\n            result = passages.restrict_to_celex",
-    ),
-    # ── tools ──
-    Mutant(
-        "tool error swallowed",
-        TOOLS_BASE,
-        "    try:\n        return fn()\n    except LexAPIError as error:\n"
-        "        raise LexAPIToolError.from_sdk(error) from error",
-        "    try:\n        return fn()\n    except LexAPIError:\n"
-        "        return None  # type: ignore",
-    ),
-    Mutant(
-        "key masking removed",
-        TOOLS_BASE,
-        '    return _KEY_PATTERN.sub("lex_***", text)',
-        "    return text",
-    ),
-    Mutant(
-        "tool search: as_of not passed to the core",
-        TOOLS_BASE,
-        "response, unresolved=self._unresolved, as_of=as_of",
-        "response, unresolved=self._unresolved",
-    ),
-    Mutant(
-        "tool output bypasses format_passage",
-        TOOLS_BASE,
-        "        else:\n            block = passages.format_passage(candidate)",
-        "        else:\n            block = candidate.content()",
-    ),
-    Mutant(
-        "error code missing from tool error",
-        TOOLS_BASE,
-        'message = f"LexAPI error {error.code}{status}: {api_message}"',
-        'message = f"LexAPI error{status}: {api_message}"',
-    ),
-    Mutant(
-        "law on a date ignores the unresolved policy",
-        TOOLS_BASE,
-        '            response, provision=provision, unresolved="withhold"',
-        "            response, provision=provision, unresolved=self._unresolved",
-    ),
-    Mutant(
-        "tool search over-asks",
-        TOOLS_BASE,
-        '            "limit": self._similarity_top_k,',
-        '            "limit": self._similarity_top_k * 2,',
     ),
     Mutant(
         "case law without include_text",
@@ -241,36 +196,184 @@ MUTANTS = [
         "        self._async = None\n        self._owned = True",
         "        self._async = AsyncLexAPI(api_key, **self._kwargs)\n        self._owned = True",
     ),
+    # ── retrievers: parity ──
     Mutant(
-        "billing URL missing from the past-due error",
-        TOOLS_BASE,
-        '            message += f" Billing: {error.billing_url}"',
+        "cut rule: no space fallback (retrievers)",
+        RET_NODES,
+        '    for separator in ("\\n\\n", "\\n", " "):',
+        '    for separator in ("\\n\\n", "\\n"):',
+    ),
+    Mutant(
+        "cut note counts the stripped text",
+        RET_NODES,
+        "{len(kept)} of {len(text)} characters shown",
+        "{len(kept)} of {len(body)} characters shown",
+    ),
+    Mutant(
+        "retriever date not validated",
+        RET_BASE,
+        '    raise ValueError(f"{name} must be a date in the form YYYY-MM-DD; got {value!r}")',
+        "    return value  # type: ignore[return-value]",
+    ),
+    Mutant(
+        "report field order changed",
+        RET_NODES,
+        "    returned_withheld: int\n    returned_labelled: int\n",
+        "    returned_labelled: int\n    returned_withheld: int\n",
+    ),
+    Mutant(
+        "closed instance still answers",
+        f"{RET}/llama_index/retrievers/lexapi/_client.py",
+        '            raise RuntimeError(f"{self._owner} is closed; create a new one.")',
         "            pass",
     ),
     Mutant(
-        "period rule ignored",
+        "only-async misuse is a TypeError",
+        f"{RET}/llama_index/retrievers/lexapi/_client.py",
+        '            raise ValueError(\n                f"{self._owner} was given only',
+        '            raise TypeError(\n                f"{self._owner} was given only',
+    ),
+    # ── tools ──
+    Mutant(
+        "tool error swallowed",
         TOOLS_BASE,
-        '        if api_message and api_message[-1] not in ".!?":',
-        "        if api_message:",
+        "        return fn()\n    except LexAPIError as error:\n"
+        "        failure = LexAPIToolError.from_sdk(error)",
+        "        return fn()\n    except LexAPIError:\n        return None  # type: ignore",
+    ),
+    Mutant(
+        "F1: SDK error chained to the tool error",
+        TOOLS_BASE,
+        "        return fn()\n    except LexAPIError as error:\n"
+        "        failure = LexAPIToolError.from_sdk(error)",
+        "        return fn()\n    except LexAPIError as error:\n"
+        "        raise LexAPIToolError.from_sdk(error) from None",
+    ),
+    Mutant(
+        "F1: unreadable answer passes the SDK message on",
+        TOOLS_BASE,
+        "        if isinstance(error, InvalidResponseError) or (",
+        "        if False and (",
+    ),
+    Mutant(
+        "key masking removed",
+        TOOLS_BASE,
+        '    return _KEY_PATTERN.sub("lex_***", text)',
+        "    return text",
+    ),
+    Mutant(
+        "tool search: as_of not passed to the core",
+        TOOLS_BASE,
+        "response, unresolved=self._unresolved, as_of=as_of",
+        "response, unresolved=self._unresolved",
+    ),
+    Mutant(
+        "tool output bypasses format_passage",
+        TOOLS_BASE,
+        'f"[{n}] {passages.format_passage(p)}" if numbered',
+        'f"[{n}] {p.content()}" if numbered',
+    ),
+    Mutant(
+        "output not numbered",
+        TOOLS_BASE,
+        'f"[{n}] {passages.format_passage(p)}" if numbered',
+        'f"{passages.format_passage(p)}" if numbered',
+    ),
+    Mutant(
+        "drop note only when nothing is shown",
+        TOOLS_BASE,
+        "    if result.dropped:\n",
+        "    if result.dropped and not shown:\n",
+    ),
+    Mutant(
+        "error code missing from tool error",
+        TOOLS_BASE,
+        'message = f"LexAPI error {error.code}{http}: {api_message}"',
+        'message = f"LexAPI error{http}: {api_message}"',
+    ),
+    Mutant(
+        "retry wait only for 429",
+        TOOLS_BASE,
+        "        if error.retry_after is not None:",
+        "        if error.status == 429 and error.retry_after is not None:",
+    ),
+    Mutant(
+        "as-of tool uses the search policy",
+        TOOLS_BASE,
+        '            response, provision=provision, unresolved="withhold"',
+        "            response, provision=provision, unresolved=self._unresolved",
+    ),
+    Mutant(
+        "tool search over-asks",
+        TOOLS_BASE,
+        '            "limit": self._similarity_top_k,',
+        '            "limit": self._similarity_top_k * 2,',
     ),
     Mutant(
         "description ignores the unresolved policy",
         TOOLS_BASE,
-        "tool_metadata(self._unresolved)",
-        "tool_metadata()",
+        "**tool_metadata(self._unresolved, self._max_chars),",
+        '**tool_metadata("withhold", self._max_chars),',
     ),
     Mutant(
-        "read budget ignored",
+        "F3: read budget ignored",
         TOOLS_BASE,
-        "            max_chars=self._max_chars,",
-        "            max_chars=None,",
+        "max_chars=self._max_chars, celex=celex",
+        "max_chars=None, celex=celex",
+    ),
+    Mutant(
+        "F3: budget counts Source lines",
+        TOOLS_BASE,
+        "        length = _body_length(passage)",
+        "        length = len(passages.format_passage(passage))",
+    ),
+    Mutant(
+        "cut rule: no space fallback (tools)",
+        "llama-index-tools-lexapi/llama_index/tools/lexapi/_passages.py",
+        '    for separator in ("\\n\\n", "\\n", " "):',
+        '    for separator in ("\\n\\n", "\\n"):',
+    ),
+    Mutant(
+        "tool date not validated",
+        TOOLS_BASE,
+        "    raise LexAPIToolError.invalid_argument(name, value)",
+        "    return",
+    ),
+    Mutant(
+        "as-of schema without the date pattern",
+        TOOLS_BASE,
+        '    as_of: str = Field(pattern=_DATE_PATTERN, description="The date, YYYY-MM-DD.")',
+        '    as_of: str = Field(description="The date, YYYY-MM-DD.")',
+    ),
+    Mutant(
+        "not_shown not reported",
+        TOOLS_BASE,
+        "        not_shown=len(rest),",
+        "        not_shown=0,",
+    ),
+    Mutant(
+        "read reports a requested count",
+        TOOLS_BASE,
+        "            result, requested=None, empty=empty, max_chars=self._max_chars, celex=celex",
+        "            result, requested=1, empty=empty, max_chars=self._max_chars, celex=celex",
+    ),
+    Mutant(
+        "read-without-text string changed",
+        TOOLS_BASE,
+        'f"LexAPI returned no text for article {article} of CELEX {celex}."',
+        'f"LexAPI returned no text for CELEX {celex} {article}."',
+    ),
+    Mutant(
+        "read without article omits fullText",
+        TOOLS_BASE,
+        '["metadata", "articles", "fullText"]',
+        "None",
     ),
     Mutant(
         "tool description claims more than the core",
         TOOLS_BASE,
-        '"""Search EU legislation by meaning; returns matching articles, each with its citation.',
-        '"""Search EU legislation in force by meaning; returns matching articles, each with its'
-        " citation.",
+        '"Search EU legislation (EUR-Lex) by meaning. Returns matching articles, each followed "',
+        '"Search EU legislation in force (EUR-Lex) by meaning. Returns matching articles, "',
     ),
 ]
 

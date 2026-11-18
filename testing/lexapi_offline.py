@@ -57,7 +57,8 @@ def assert_offline_client(client: LexAPI | AsyncLexAPI) -> None:
 
 @dataclass
 class Route:
-    """One canned answer: HTTP status, JSON body and extra headers."""
+    """One canned answer: HTTP status, JSON body (a ``str`` is sent as the
+    raw body, e.g. a truncated one) and extra headers."""
 
     body: Any
     status: int = 200
@@ -86,6 +87,9 @@ class Recorder:
             return httpx.Response(
                 404, json={"success": False, "error": {"code": "NOT_FOUND", "message": path}}
             )
+        if isinstance(route.body, str):
+            headers = {"content-type": "application/json", **route.headers}
+            return httpx.Response(route.status, content=route.body.encode(), headers=headers)
         return httpx.Response(route.status, json=route.body, headers=route.headers)
 
     def bodies(self) -> list[Any]:

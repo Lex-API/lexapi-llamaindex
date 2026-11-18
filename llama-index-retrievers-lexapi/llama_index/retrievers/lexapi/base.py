@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import datetime as dt
+import re
 from collections.abc import Iterable, Sequence
-from typing import Any, NamedTuple, get_args
+from typing import Any, NamedTuple, NoReturn, Self, SupportsIndex, get_args
 
 import llama_index.core.instrumentation as instrument
 from llama_index.core.base.base_retriever import BaseRetriever
@@ -89,12 +90,26 @@ def _check_max_chars(value: int | None) -> int | None:
     return value
 
 
-def _iso(value: DateLike | None) -> str | None:
-    if value is None or isinstance(value, str):
-        return value
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _iso(value: DateLike | None, name: str = "as_of") -> str | None:
+    """``YYYY-MM-DD`` for a date, or a string that is a real calendar day in
+    that form; anything else raises ``ValueError`` before any request."""
+    if value is None:
+        return None
     if isinstance(value, dt.datetime):
         return value.date().isoformat()
-    return value.isoformat()
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    if isinstance(value, str) and _ISO_DATE.fullmatch(value):
+        try:
+            dt.date.fromisoformat(value)
+        except ValueError:
+            pass
+        else:
+            return value
+    raise ValueError(f"{name} must be a date in the form YYYY-MM-DD; got {value!r}")
 
 
 class _LexAPIRetriever(BaseRetriever):
@@ -152,6 +167,34 @@ class _LexAPIRetriever(BaseRetriever):
         )
         return nodes
 
+    # ── lifecycle ───────────────────────────────────────────────────────
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+    def _no_copy(self) -> NoReturn:
+        raise TypeError(
+            f"{type(self).__name__} holds an open client and cannot be copied or pickled."
+        )
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        self._no_copy()
+
+    def __copy__(self) -> NoReturn:
+        self._no_copy()
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> NoReturn:
+        self._no_copy()
+
     # ── public extras ───────────────────────────────────────────────────
 
     def retrieve_with_result(self, str_or_query_bundle: QueryType) -> LexAPIRetrieval:
@@ -184,12 +227,13 @@ class _LexAPIRetriever(BaseRetriever):
         return LexAPIRetrieval(nodes, report, result)
 
     def close(self) -> None:
-        """Close the sync client this retriever built from a key. A client
-        passed in is left open."""
+        """Close the sync client this retriever built from a key and mark
+        the retriever closed. A client passed in is never closed."""
         self._clients.close()
 
     async def aclose(self) -> None:
-        """Close the async client this retriever built from a key."""
+        """Close both clients this retriever built from a key and mark the
+        retriever closed. A client passed in is never closed."""
         await self._clients.aclose()
 
 
@@ -201,7 +245,9 @@ class LexAPILegislationRetriever(_LexAPIRetriever):
     ``Source:`` line (:func:`lexapi.passages.format_passage`), the metadata
     is :meth:`lexapi.passages.Passage.metadata`, the id is
     :attr:`~lexapi.passages.Passage.id` and the score is the API's,
-    unchanged.
+    unchanged. Nodes keep the API's order. Hits sharing an id are merged
+    (first position kept, a later hit replaces it only when it carries more
+    text), so scores need not be descending: each node keeps its own score.
 
     Args:
         client: a :class:`lexapi.LexAPI` to use. Not closed by the retriever.
@@ -270,7 +316,7 @@ class LexAPILegislationRetriever(_LexAPIRetriever):
         self._emit_withheld = emit_withheld
         self._include_citation_in_text = include_citation_in_text
         super().__init__(
-            Clients(client, async_client, api_key, base_url),
+            Clients(client, async_client, api_key, base_url, type(self).__name__),
             callback_manager=callback_manager,
             verbose=verbose,
         )
@@ -337,7 +383,8 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
 
     The search is always sent with ``include_text=True``. The text of a node
     is the whole decision; decisions are long. ``max_chars`` cuts it at a
-    paragraph break and marks the cut. The snippet and the machine-written
+    paragraph break when one is near, otherwise at a line break, a space or
+    the limit, and marks the cut. The snippet and the machine-written
     summary are never used as text: a hit the API sent without text becomes
     a node holding only a notice that no text was returned.
 
@@ -351,9 +398,7 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
         court: keep to one court (sent as a search filter).
         date_from, date_to: decision-date range (sent as search filters).
         max_chars: cut each decision's text to at most this many characters
-            (at least 200; default ``None``: the whole decision). The cut is
-            made at the last blank line, line break or space within the limit
-            and is marked in the text.
+            (at least 200; default ``None``: the whole decision).
         include_citation_in_text: as for :class:`LexAPILegislationRetriever`.
         callback_manager, verbose: passed to ``BaseRetriever``.
     """
@@ -379,12 +424,16 @@ class LexAPICaseLawRetriever(_LexAPIRetriever):
         self._similarity_top_k = _check_top_k(similarity_top_k, MAX_CASE_LAW_TOP_K)
         self._language = language
         self._min_score = min_score
-        filters = {"court": court, "date_from": _iso(date_from), "date_to": _iso(date_to)}
+        filters = {
+            "court": court,
+            "date_from": _iso(date_from, "date_from"),
+            "date_to": _iso(date_to, "date_to"),
+        }
         self._filters = {k: v for k, v in filters.items() if v is not None} or None
         self._max_chars = _check_max_chars(max_chars)
         self._include_citation_in_text = include_citation_in_text
         super().__init__(
-            Clients(client, async_client, api_key, base_url),
+            Clients(client, async_client, api_key, base_url, type(self).__name__),
             callback_manager=callback_manager,
             verbose=verbose,
         )

@@ -38,19 +38,26 @@ MIN_MAX_CHARS = 200
 class LexAPICallReport:
     """What one call did.
 
-    ``requested`` is the number of hits asked for and ``returned`` the number
-    of nodes returned. ``withheld``, ``kept_labelled``, ``dropped``,
-    ``uncitable`` and ``filtered_out`` are the counters of
-    :class:`lexapi.passages.PassageResult`, counted before de-duplication.
-    ``withheld_not_emitted`` counts withheld passages left out by
-    ``emit_withheld=False``; ``returned_withheld`` the withheld nodes
-    returned; ``duplicates`` the passages merged into another of the same
-    id; ``truncated`` the texts cut by ``max_chars``. ``units_charged`` and
-    ``credits_remaining`` are as the response reported them (``None`` when
-    it reported none).
+    - ``requested``: hits asked for (``None`` when the call asks for no
+      number of hits).
+    - ``returned``: nodes (or passages) returned.
+    - ``as_of``: the date asked for.
+    - ``withheld``, ``kept_labelled``, ``dropped``, ``uncitable``,
+      ``filtered_out``: the counters of :class:`lexapi.passages.PassageResult`,
+      counted before de-duplication.
+    - ``returned_withheld`` / ``returned_labelled``: returned passages whose
+      text was withheld / is a labelled latest text.
+    - ``withheld_not_emitted``: withheld passages left out by
+      ``emit_withheld=False``.
+    - ``duplicates``: passages merged into another of the same id.
+    - ``truncated``: returned texts that were cut.
+    - ``not_shown``: passages left out by a character budget.
+    - ``units_charged``, ``credits_remaining``: as the response reported them
+      (``None`` when it reported none).
+    - ``hint``: the API's low-confidence hint.
     """
 
-    requested: int
+    requested: int | None
     returned: int
     as_of: str | None
     withheld: int
@@ -58,10 +65,12 @@ class LexAPICallReport:
     dropped: int
     uncitable: int
     filtered_out: int
-    withheld_not_emitted: int
     returned_withheld: int
+    returned_labelled: int
+    withheld_not_emitted: int
     duplicates: int
     truncated: int
+    not_shown: int
     units_charged: int | None
     credits_remaining: int | None
     hint: str | None
@@ -103,35 +112,42 @@ def dedupe(
     return list(chosen.values()), skipped, duplicates
 
 
-def truncate(passage: Passage, max_chars: int) -> tuple[Passage, bool]:
-    """The passage with its text cut to at most ``max_chars`` characters,
-    and whether it was cut.
+def cut_text(text: str, max_chars: int) -> tuple[str, bool]:
+    """``text`` within ``max_chars`` characters, and whether it was cut.
 
-    Leading whitespace is dropped first. The cut is made at the last blank
-    line within the limit, else the last line break, else the last space,
-    else at the limit, and never leaves an empty text. The cut is marked in
-    the text.
+    Leading whitespace is dropped; a text that then fits is returned as it
+    is. Otherwise the cut is made at the last blank line at or before
+    ``max_chars``, else the last line break, else the last space, else at
+    ``max_chars``, never leaving nothing; a note saying so follows.
     """
-    text = passage.text
-    if text is None:
-        return passage, False
-    text = text.lstrip()
-    if len(text) <= max_chars:
-        return passage, False
+    body = text.lstrip()
+    if len(body) <= max_chars:
+        return body, False
     cut = 0
     for separator in ("\n\n", "\n", " "):
-        cut = text.rfind(separator, 0, max_chars + 1)
-        if cut > 0 and text[:cut].strip():
+        position = body.rfind(separator, 0, max_chars + len(separator))
+        if position > 0:
+            cut = position
             break
-        cut = 0
     if cut <= 0:
         cut = max_chars
-    kept = text[:cut].rstrip()
+    kept = body[:cut].rstrip()
     note = (
         f"[Text cut by {DISTRIBUTION}: {len(kept)} of {len(text)} characters shown. "
         "The full text is at the source.]"
     )
-    return dataclasses.replace(passage, text=f"{kept}\n{note}"), True
+    return f"{kept}\n{note}", True
+
+
+def truncate(passage: Passage, max_chars: int) -> tuple[Passage, bool]:
+    """The passage with its text passed through :func:`cut_text`, and
+    whether it was cut. A passage without text is returned unchanged."""
+    if passage.text is None:
+        return passage, False
+    text, cut = cut_text(passage.text, max_chars)
+    if text == passage.text:
+        return passage, False
+    return dataclasses.replace(passage, text=text), cut
 
 
 def passage_text(passage: Passage, *, include_citation_in_text: bool = True) -> str:
@@ -190,10 +206,12 @@ def build(
         dropped=result.dropped,
         uncitable=result.uncitable,
         filtered_out=result.filtered_out,
-        withheld_not_emitted=skipped,
         returned_withheld=sum(p.text_withheld for p in kept),
+        returned_labelled=sum(p.text_status == "not_established_for_date" for p in kept),
+        withheld_not_emitted=skipped,
         duplicates=duplicates,
         truncated=truncated,
+        not_shown=0,
         units_charged=result.units_charged,
         credits_remaining=result.credits_remaining,
         hint=result.hint,

@@ -49,9 +49,12 @@ nodes = await retriever.aretrieve("own funds requirements")
 ```
 
 `retrieve` uses the sync client and `aretrieve` the async one. With only a
-sync client, `aretrieve` runs it in a worker thread. A client you pass in is
-never closed by the retriever. Clients it builds from a key (the async one
-on first async use) are closed by `close()` / `await aclose()`.
+sync client, `aretrieve` runs it in a worker thread; with only an async
+client, `retrieve` raises `ValueError`. A client you pass in is never
+closed. Clients the retriever builds from a key (the async one on first
+async use) are closed by `close()` (the sync one) or `await aclose()`
+(both), or by leaving a `with` / `async with` block; the retriever is then
+closed and refuses further calls.
 
 ## Nodes
 
@@ -89,6 +92,9 @@ Metadata keys (present when known): `kind`, `celex`, `cite_celex`,
 retriever = LexAPILegislationRetriever(as_of="2019-06-01")
 ```
 
+The date must be a real calendar day in the form `YYYY-MM-DD` (or a
+`datetime.date`); anything else raises `ValueError` before any request.
+
 - A text is passed on as the text for the date only when LexAPI established
   it for that date.
 - Any other hit is kept as a node whose text is a notice with LexAPI's
@@ -111,9 +117,12 @@ It never asks for more hits to make up the number.
 
 `LexAPICaseLawRetriever` always asks for the full text of each decision
 (`include_text=True`). The text of a node is the whole decision, which can
-be long; `max_chars=N` (at least 200) cuts it at the last blank line, line
-break or space within `N` characters and marks the cut. The default is the
-whole decision. The search snippet and
+be long; `max_chars=N` (at least 200) cuts it at the last blank line within
+`N` characters, else the last line break, else the last space, else at `N`,
+and marks the cut with `[Text cut by llama-index-retrievers-lexapi: K of M
+characters shown. The full text is at the source.]` before the `Source:`
+line. A cut can fall early when the only break is near the start. The
+default is the whole decision. The search snippet and
 the machine-written summary are never used as text. Filters: `court`,
 `date_from`, `date_to`.
 
@@ -121,7 +130,7 @@ the machine-written summary are never used as text. Filters: `court`,
 
 `similarity_top_k` is the number of hits requested. A legislation search
 costs 5 credits; with `as_of`, each version LexAPI does not hold is fetched
-(up to 3 per request by default) at 0-5 credits each. A case-law search
+(up to 3 per search) at 0-5 credits each. A case-law search
 costs 5 credits. See the LexAPI API reference for the current prices.
 
 What a call did is reported per call, never stored on the retriever:
@@ -133,26 +142,31 @@ print(report.requested, report.returned, report.units_charged, report.credits_re
 
 `report` is a `LexAPICallReport`: `requested`, `returned`, `as_of`, the
 core's counters `withheld`, `kept_labelled`, `dropped`, `uncitable` and
-`filtered_out` (counted before de-duplication), `withheld_not_emitted`,
-`returned_withheld`, `duplicates`, `truncated`, `units_charged`,
-`credits_remaining` and `hint`. `result` is the call's
+`filtered_out` (counted before de-duplication), `returned_withheld`,
+`returned_labelled`, `withheld_not_emitted`, `duplicates`, `truncated`
+(returned texts that were cut), `not_shown` (always 0 for the retrievers),
+`units_charged`, `credits_remaining` and `hint`. `result` is the call's
 `lexapi.passages.PassageResult`. Inside a query engine, subscribe an
 instrumentation event handler to `LexAPIRetrievalEvent`, which carries both
 for every retrieval.
 
-Two hits with the same node id are merged: the first position is kept, and
-a later hit replaces the earlier one only when it carries more (a text over
-a labelled latest text over a notice).
+Nodes keep the API's order. Two hits with the same node id are merged: the
+first position is kept, and a later hit replaces the earlier one only when
+it carries more (a text over a labelled latest text over a notice). Each
+node keeps its own score, so after a merge the scores need not be
+descending.
 
 ## Errors
 
-An error is never turned into an empty list. A result can be empty when the
+An error is never turned into an empty list. An answer LexAPI's client cannot read raises an error; it is never read as an empty result. A result can be empty when the
 search had no hits, when `celex` filtered every hit out, when
 `unresolved="drop"` left every hit out, when `emit_withheld=False` left out
 withheld hits, or when the API sent hits without a CELEX number (counted in
 `report.uncitable`). The SDK's exceptions propagate unchanged, for example `lexapi.CreditsExhaustedError` (402), `lexapi.PaymentPastDueError`
-(403), `lexapi.RateLimitedError` (429) and `lexapi.AuthenticationError`
-(401).
+(403), `lexapi.RateLimitedError` (429), `lexapi.AuthenticationError`
+(401), and `lexapi.InvalidResponseError` for an answer that could not be
+read. The message of that last one can quote the response body, so do not
+pass it to a model as it is.
 
 ## What this package does not do
 

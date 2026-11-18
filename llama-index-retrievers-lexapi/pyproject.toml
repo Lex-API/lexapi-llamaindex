@@ -27,7 +27,7 @@ dependencies = [
     "llama-index-core>=0.13.0,<0.15",
     # TODO(release): replace with "lexapi-client>=0.5.0,<0.6" once 0.5.0 is on PyPI.
     # PyPI refuses direct references, so this must change before any upload.
-    "lexapi-client @ git+https://github.com/Lex-API/lexapi-python@4139bbd4f0939b4a4bf405bcde432bc835df4c95",
+    "lexapi-client @ git+https://github.com/Lex-API/lexapi-python@cd69587e6b187dcbdba1404edc1eaa100782529c",
 ]
 
 [project.urls]
@@ -54,6 +54,9 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["llama_index/", "README.md", "CHANGELOG.md", "LICENSE"]
+
+[tool.hatch.build.hooks.custom]
+# hatch_build.py: keeps the repository's .gitignore out of the sdist.
 
 [tool.hatch.build.targets.wheel]
 include = ["llama_index/"]

@@ -3,8 +3,9 @@
 No client is created at import and none is shared between instances. A
 client the caller passes in is used as it is and never closed here. When
 the caller passes a key (or relies on ``LEXAPI_API_KEY``) instead, the sync
-client is built at construction and the async client on first async use;
-both can be closed with ``close()`` / ``aclose()``. The key is held only in
+client is built at construction and the async client on first async use.
+``close()`` closes the sync client and ``aclose()`` both; either marks the
+instance closed. The key is held only in
 a wrapper whose ``repr`` is masked.
 """
 
@@ -51,7 +52,7 @@ class _Secret:
 class Clients:
     """The sync and async clients one instance uses."""
 
-    __slots__ = ("_async", "_key", "_kwargs", "_owned", "_sync")
+    __slots__ = ("_async", "_closed", "_key", "_kwargs", "_owned", "_owner", "_sync")
 
     def __init__(
         self,
@@ -59,7 +60,10 @@ class Clients:
         async_client: AsyncLexAPI | None,
         api_key: str | None,
         base_url: str | None,
+        owner: str,
     ) -> None:
+        self._owner = owner
+        self._closed = False
         if client is not None and not isinstance(client, LexAPI):
             raise TypeError("client must be a lexapi.LexAPI")
         if async_client is not None and not isinstance(async_client, AsyncLexAPI):
@@ -68,10 +72,7 @@ class Clients:
         self._kwargs: dict[str, Any] = {}
         if client is not None or async_client is not None:
             if api_key is not None or base_url is not None:
-                raise ValueError(
-                    "Pass either client/async_client or api_key/base_url, not both: "
-                    "configure the key and base URL on the client you pass."
-                )
+                raise ValueError("Pass either client/async_client or api_key/base_url, not both.")
             self._sync: LexAPI | None = client
             self._async: AsyncLexAPI | None = async_client
             self._owned = False
@@ -86,11 +87,21 @@ class Clients:
         self._async = None
         self._owned = True
 
+    def check_open(self) -> None:
+        if self._closed:
+            raise RuntimeError(f"{self._owner} is closed; create a new one.")
+
+    @property
+    def passed_in(self) -> bool:
+        """``True`` when the caller passed the clients in."""
+        return not self._owned
+
     @property
     def sync(self) -> LexAPI:
+        self.check_open()
         if self._sync is None:
-            raise TypeError(
-                "This instance was given only an async_client; use the async methods, "
+            raise ValueError(
+                f"{self._owner} was given only an async_client; use the async methods, "
                 "or pass a lexapi.LexAPI as client as well."
             )
         return self._sync
@@ -100,20 +111,27 @@ class Clients:
         """The async client, built on first use when this instance owns its
         clients; ``None`` when only a sync client was passed in (async calls
         then run the sync client in a worker thread)."""
+        self.check_open()
         if self._async is None and self._owned:
             self._async = AsyncLexAPI(self._key.get(), **self._kwargs)
         return self._async
 
     def close(self) -> None:
-        """Close the sync client this package built; a client passed in is
-        left open."""
+        """Close the sync client this package built and mark the instance
+        closed. A client passed in is never closed."""
+        self._closed = True
         if self._owned and self._sync is not None:
             self._sync.close()
 
     async def aclose(self) -> None:
-        """Close the async client this package built, if it was built."""
-        if self._owned and self._async is not None:
-            await self._async.close()
+        """Close both clients this package built and mark the instance
+        closed. A client passed in is never closed."""
+        self._closed = True
+        if self._owned:
+            if self._sync is not None:
+                self._sync.close()
+            if self._async is not None:
+                await self._async.close()
 
     def __repr__(self) -> str:
         return f"Clients(owned={self._owned})"
