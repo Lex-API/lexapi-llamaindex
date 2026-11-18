@@ -500,8 +500,8 @@ MUTANTS = [
     Mutant(
         "read language not checked",
         TOOLS_BASE,
-        '        _check_not_empty(celex, "celex")\n        _check_language(language)\n\n',
-        '        _check_not_empty(celex, "celex")\n\n',
+        '        _check_optional(article, "article")\n        _check_language(language)\n',
+        '        _check_optional(article, "article")\n',
     ),
     Mutant(
         "citation shown twice to the LLM",
