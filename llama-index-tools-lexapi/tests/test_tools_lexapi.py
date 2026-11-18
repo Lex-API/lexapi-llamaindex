@@ -126,11 +126,11 @@ READ_LEAD = (
     "published in the Official Journal."
 )
 AS_OF_TEXT = (
-    "The version of an EU act that LexAPI lists for a date (as_of, YYYY-MM-DD), and "
-    "optionally one provision of it, followed by a Source line with its CELEX citation. "
-    "When LexAPI did not establish the text for that date, the answer is a notice without "
-    "text. It does not say whether a provision applied on that date. Consolidated texts have "
-    "no legal force; the Source line names the act to cite when LexAPI knows it."
+    "Get the version of an EU act listed for a date (YYYY-MM-DD) and, optionally, one "
+    "provision of it (art_17, anx_III, rct_26-28). If LexAPI cannot establish the text for "
+    "that date, you get a notice with the reason and no text. It does not say whether a "
+    "provision applied on that date. Consolidated texts have no legal force; the Source line "
+    "names the act to cite when LexAPI knows it."
 )
 SIGNATURES = {
     "lexapi_search_legislation": "(query: str, as_of: str | None = None) -> str",
@@ -579,7 +579,9 @@ def test_legislation_as_of_without_a_document_is_unreadable() -> None:
     spec, _ = spec_for({ASOF: Route(body)})
     with pytest.raises(LexAPIToolError) as info:
         spec.lexapi_legislation_as_of("32099R0001", AS_OF)
-    assert str(info.value) == "LexAPI error INVALID_RESPONSE: The answer could not be read."
+    assert str(info.value) == (
+        "LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not be read."
+    )
 
 
 # ── errors ──────────────────────────────────────────────────────────────
@@ -1095,7 +1097,27 @@ READ_BAD = {
         "success": True,
         "document": {"celex": "32099R0001", "content": {"fullText": 5}},
     },
+    "celex whitespace": {"success": True, "document": {"celex": "   ", "content": None}},
 }
+# Shapes the SDK rejects itself (HTTP 200 in the text); the rest are caught by
+# the tool's own additional checks (no status).
+READ_SDK_REJECTS = {
+    "empty object",
+    "success only",
+    "document null",
+    "document a string",
+    "content a string",
+    "articles not a list",
+    "article not an object",
+}
+
+
+def _valid_as_of(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = load_fixture("as-of.unresolved.json")
+    body.update(overrides)
+    return body
+
+
 AS_OF_BAD = {
     "empty object": {},
     "success only": {"success": True},
@@ -1104,7 +1126,9 @@ AS_OF_BAD = {
     "document an object": {"success": True, "document": {}, "asOfResolved": False},
     "resolved missing": {"success": True, "document": "32099R0001"},
     "resolved a string": {"success": True, "document": "32099R0001", "asOfResolved": "true"},
+    "document whitespace": _valid_as_of(document="   "),
 }
+AS_OF_TOOL_ONLY = {"document whitespace"}
 
 
 async def _all_paths(
@@ -1134,7 +1158,9 @@ async def test_malformed_read_answers_are_unreadable(shape: str) -> None:
     aspec = LexAPIToolSpec(async_client=aclient)
     with collect() as events:
         texts = await _all_paths(spec, aspec, "lexapi_read_document", {"celex": "32099R0001"})
-    assert all(NO_STATUS in t for t in texts)
+    expected = WITH_STATUS if shape in READ_SDK_REJECTS else NO_STATUS
+    assert all(t == expected or t.endswith(expected) for t in texts)
+    assert all("returned no" not in t for t in texts)
     assert events == []
 
 
@@ -1147,7 +1173,9 @@ async def test_malformed_as_of_answers_are_unreadable(shape: str) -> None:
     args = {"celex": "32099R0001", "as_of": AS_OF}
     with collect() as events:
         texts = await _all_paths(spec, aspec, "lexapi_legislation_as_of", args)
-    assert all(NO_STATUS in t for t in texts)
+    expected = NO_STATUS if shape in AS_OF_TOOL_ONLY else WITH_STATUS
+    assert all(t == expected or t.endswith(expected) for t in texts)
+    assert all("returned no" not in t for t in texts)
     assert events == []
 
 
@@ -1272,23 +1300,24 @@ async def test_arguments_are_checked_before_any_request(
     assert requests == [] and arecorder.requests == []
 
 
-def test_argument_descriptions_are_pinned() -> None:
-    spec, _ = spec_for({})
-    props = {
-        n: t.metadata.get_parameters_dict()["properties"] for n, t in tools_by_name(spec).items()
-    }
-    assert props["lexapi_search_legislation"]["query"]["description"] == (
-        "What to look for, in plain words."
-    )
-    assert props["lexapi_search_legislation"]["as_of"]["description"] == (
-        "Optional date, YYYY-MM-DD: return the text for that date. Leave it out for the "
-        "latest text."
-    )
-    assert props["lexapi_read_document"]["article"]["description"] == "art_17, 17 or 'Article 17'"
-    assert props["lexapi_legislation_as_of"]["provision"]["description"] == (
-        "Optional provision: a whole article (art_17, 17 or 'Article 17'), an annex (anx_III) "
-        "or recitals (rct_26 or rct_26-28). Without it only the version is named."
-    )
+def _strip_titles(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        return {k: _strip_titles(v) for k, v in schema.items() if k != "title"}
+    if isinstance(schema, list):
+        return [_strip_titles(v) for v in schema]
+    return schema
+
+
+@pytest.mark.parametrize("entry", load_fixture("tool-schemas.json"), ids=lambda e: str(e))
+def test_descriptions_and_schemas_match_the_shared_fixture(entry: dict[str, Any]) -> None:
+    """Every description and argument schema equals the shared tool-schema
+    fixture, apart from LlamaIndex's signature line before the description."""
+    spec, _ = spec_for({}, **entry["config"])
+    tool = tools_by_name(spec)[entry["name"]]
+    signature = SIGNATURES[entry["name"]]
+    assert tool.metadata.description == f"{entry['name']}{signature}\n{entry['description']}"
+    params = _strip_titles(tool.metadata.get_parameters_dict())
+    assert params == entry["parameters"]
 
 
 @pytest.mark.parametrize("article", ["art_17", "17", "Article 17"])
@@ -1307,19 +1336,102 @@ def test_provision_forms_are_sent_as_given(provision: str) -> None:
     assert json.loads(requests[0].content)["provision"] == provision
 
 
-def test_empty_as_of_document_is_caught_by_both_checks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An empty ``document`` string gives no passage: the shape check and the
-    no-passage backstop each raise the fixed text on their own."""
-    import llama_index.tools.lexapi.base as base
+def test_blank_as_of_document_is_rejected_by_the_sdk_or_the_tool() -> None:
+    """An empty ``document`` is rejected by the SDK; a whitespace-only one
+    only by the tool's own check."""
+    spec, _ = spec_for({ASOF: Route(_valid_as_of(document=""))})
+    with pytest.raises(LexAPIToolError) as sdk:
+        spec.lexapi_legislation_as_of("32099R0001", AS_OF)
+    assert str(sdk.value) == WITH_STATUS
+    spec, _ = spec_for({ASOF: Route(_valid_as_of(document="   "))})
+    with pytest.raises(LexAPIToolError) as tool:
+        spec.lexapi_legislation_as_of("32099R0001", AS_OF)
+    assert str(tool.value) == NO_STATUS
+    assert_detached(tool.value)
 
-    body = {"success": True, "document": "", "asOfResolved": False}
-    spec, _ = spec_for({ASOF: Route(body)})
+
+def test_as_of_without_a_passage_is_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The no-passage backstop raises the fixed text on its own."""
+    empty = passages.PassageResult(passages=())
+    monkeypatch.setattr(passages, "from_legislation_as_of", lambda *a, **k: empty)
+    spec, _ = spec_for({ASOF: fixture_route("as-of.resolved.json")})
     with pytest.raises(LexAPIToolError) as info:
         spec.lexapi_legislation_as_of("32099R0001", AS_OF)
     assert str(info.value) == NO_STATUS
-    assert passages.from_legislation_as_of(LegislationAsOfResponse(body)).passages == ()
-    monkeypatch.setattr(base, "_check_as_of_shape", lambda response: None)
-    with pytest.raises(LexAPIToolError) as backstop:
-        spec.lexapi_legislation_as_of("32099R0001", AS_OF)
-    assert str(backstop.value) == NO_STATUS
-    assert_detached(backstop.value)
+
+
+# ── cut rule bounds and the read budget's first passage ────────────────
+
+
+@pytest.mark.parametrize("separator", ["\n\n", "\n", " "])
+def test_a_separator_starting_at_the_limit_counts(separator: str) -> None:
+    # An earlier separator in the second half would win if the one starting
+    # exactly at the limit were not counted.
+    head = "a" * 100 + separator + "c" * (50 - len(separator))
+    text = head + separator + "b" * 100
+    assert text.index(separator, 101) == 150
+    out, cut = cut_text(text, 150)
+    assert cut and out.split("\n[Text cut by ")[0] == head
+
+
+@pytest.mark.parametrize(
+    ("position", "kept"),
+    [(49, "a" * 49 + " " + "b" * 50), (50, "a" * 50)],
+)
+def test_the_second_half_lower_bound(position: int, kept: str) -> None:
+    text = "a" * position + " " + "b" * 200
+    out, cut = cut_text(text, 100)
+    assert cut and out.split("\n[Text cut by ")[0] == kept
+
+
+def test_a_first_notice_longer_than_the_budget_is_shown() -> None:
+    long_id = "art_" + "9" * 300
+    body = _document(content={"articles": [{"id": long_id}, {"id": "art_2", "content": "b" * 10}]})
+    spec, _ = spec_for({DOC: Route(body)}, max_chars=200)
+    out = spec.lexapi_read_document("32099R0001")
+    assert out.startswith(f"[1] [No text returned for CELEX 32099R0001 {long_id}.]")
+    assert out.endswith(
+        "[Not shown: 1 more article(s) of CELEX 32099R0001: art_2. "
+        "Read one with the article argument.]"
+    )
+
+
+# ── the tool's own shape checks, behind the SDK's ──────────────────────
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"document": "32099R0001", "asOfResolved": "true"},
+        {"document": "32099R0001"},
+        {"document": "   ", "asOfResolved": False},
+        {"document": None, "asOfResolved": False},
+    ],
+)
+def test_as_of_shape_check_on_its_own(body: dict[str, Any]) -> None:
+    from llama_index.tools.lexapi.base import _check_as_of_shape
+
+    with pytest.raises(LexAPIToolError) as info:
+        _check_as_of_shape(LegislationAsOfResponse(body))
+    assert str(info.value) == NO_STATUS
+    _check_as_of_shape(LegislationAsOfResponse(load_fixture("as-of.unresolved.json")))
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"celex": "32099R0001", "content": {"articles": ["x"]}},
+        {"celex": "32099R0001", "content": {"articles": "x"}},
+        {"celex": "32099R0001", "content": "x"},
+        {"celex": " ", "content": None},
+        {"celex": "32099R0001", "content": {"fullText": 5}},
+        "x",
+    ],
+)
+def test_document_shape_check_on_its_own(document: Any) -> None:
+    from llama_index.tools.lexapi.base import _check_document_shape
+
+    with pytest.raises(LexAPIToolError) as info:
+        _check_document_shape(DocumentResponse({"success": True, "document": document}))
+    assert str(info.value) == NO_STATUS
+    _check_document_shape(DocumentResponse(load_fixture("document.read.json")))

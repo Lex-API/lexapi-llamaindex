@@ -23,3 +23,5 @@
 - Cut rule: a text within the limit is unchanged; a longer one is cut at a
   paragraph break in the second half of the limit, else a line break or a
   space there, else at the limit.
+- Depends on `lexapi-client` from its repository at commit `19da4dd` until
+  0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).

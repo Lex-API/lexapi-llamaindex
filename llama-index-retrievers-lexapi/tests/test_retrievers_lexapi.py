@@ -1028,3 +1028,24 @@ async def test_wrong_shape_200_raises_the_sdk_error(shape: str) -> None:
         assert info.value.status == 200  # type: ignore[attr-defined]
         with pytest.raises(error):
             await retriever.aretrieve("q")
+
+
+@pytest.mark.parametrize("separator", ["\n\n", "\n", " "])
+def test_a_separator_starting_at_the_limit_counts(separator: str) -> None:
+    # An earlier separator in the second half would win if the one starting
+    # exactly at the limit were not counted.
+    head = "a" * 100 + separator + "c" * (50 - len(separator))
+    text = head + separator + "b" * 100
+    assert text.index(separator, 101) == 150
+    out, cut = cut_text(text, 150)
+    assert cut and out.split("\n[Text cut by ")[0] == head
+
+
+@pytest.mark.parametrize(
+    ("position", "kept"),
+    [(49, "a" * 49 + " " + "b" * 50), (50, "a" * 50)],
+)
+def test_the_second_half_lower_bound(position: int, kept: str) -> None:
+    text = "a" * position + " " + "b" * 200
+    out, cut = cut_text(text, 100)
+    assert cut and out.split("\n[Text cut by ")[0] == kept

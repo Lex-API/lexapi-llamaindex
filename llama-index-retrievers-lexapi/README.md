@@ -86,15 +86,17 @@ Metadata keys (present when known): `kind`, `celex`, `cite_celex`,
 
 - **Embedding:** no metadata key is embedded
   (`excluded_embed_metadata_keys` lists them all).
-- **LLM view:** the model reads each fact once. Hidden
-  (`EXCLUDED_LLM_METADATA_KEYS`): `base_celex`, `celex`, `citation`, `eli`,
-  `id`, `kind`, `score`, `text_withheld`, `url`, `version_celex`,
-  `version_date`, `version_kind`, `version_valid_until`. The citation is
-  read once, in the node text's `Source:` line; with
-  `include_citation_in_text=False` the `citation` key is shown instead.
-  `cite_celex`, `consolidated`, `consolidated_note`, `as_of`,
-  `as_of_resolved`, `as_of_reason`, `text_status` and the other keys stay
-  visible.
+- **LLM view:** the citation is read once, in the `Source:` line; the keys
+  the model sees are listed below.
+  - Hidden (`EXCLUDED_LLM_METADATA_KEYS`): `base_celex`, `celex`,
+    `citation`, `eli`, `id`, `kind`, `score`, `text_withheld`, `url`,
+    `version_celex`, `version_date`, `version_kind`, `version_valid_until`.
+    With `include_citation_in_text=False` there is no `Source:` line and
+    `citation` is shown instead.
+  - Seen: every other key that is present, among them `cite_celex`,
+    `consolidated`, `consolidated_note`, `as_of`, `as_of_resolved`,
+    `as_of_reason`, `text_status`, `title`, `article_ref`, `language` and,
+    for case law, `ecli`, `court`, `decision_date`.
 
 ## The text for a date
 
@@ -169,7 +171,8 @@ descending.
 ## Errors
 
 An error is never turned into an empty list. An answer LexAPI's client
-cannot read raises an error; it is never read as an empty result. A result
+cannot read raises an error; it is never read as an empty result, and a 2xx
+answer is never retried. A result
 can be empty when the search had no hits, when `celex` filtered every hit out, when
 `unresolved="drop"` left every hit out, when `emit_withheld=False` left out
 withheld hits, or when the API sent hits without a CELEX number (counted in

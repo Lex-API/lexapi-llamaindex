@@ -396,6 +396,36 @@ MUTANTS = [
         "    if False:",
     ),
     Mutant(
+        "separator at the limit ignored (retrievers)",
+        RET_NODES,
+        "        at = body.rfind(separator, 0, max_chars + len(separator))",
+        "        at = body.rfind(separator, 0, max_chars)",
+    ),
+    Mutant(
+        "separator at the limit ignored (tools)",
+        TOOLS_PASSAGES,
+        "        at = body.rfind(separator, 0, max_chars + len(separator))",
+        "        at = body.rfind(separator, 0, max_chars)",
+    ),
+    Mutant(
+        "second-half bound off by one (tools)",
+        TOOLS_PASSAGES,
+        "        if at > 0 and max_chars // 2 <= at <= max_chars:",
+        "        if at > 0 and max_chars // 2 < at <= max_chars:",
+    ),
+    Mutant(
+        "first notice over the budget hidden",
+        TOOLS_BASE,
+        "            else:\n                shown.append(passage)\n        break",
+        "        break",
+    ),
+    Mutant(
+        "whitespace-only celex accepted",
+        TOOLS_BASE,
+        "    if not isinstance(celex, str) or not celex.strip():",
+        "    if not isinstance(celex, str) or not celex:",
+    ),
+    Mutant(
         "document celex not checked",
         TOOLS_BASE,
         "    if not isinstance(celex, str) or not celex.strip():",

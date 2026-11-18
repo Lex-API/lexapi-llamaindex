@@ -168,10 +168,12 @@ def _check_language(value: object) -> None:
 
 
 def _check_document_shape(response: DocumentResponse) -> None:
-    """A read answer must carry ``document`` as an object with a non-empty
-    ``celex`` string, ``content`` as an object or null, ``content.fullText``
-    (when present) as a string and ``content.articles`` as a list of
-    objects."""
+    """Checks on a read answer in addition to the SDK's.
+
+    The SDK checks the documented fields (``document`` an object,
+    ``content`` an object or null, ``content.articles`` a list of objects);
+    these checks repeat them and add a non-empty ``celex`` string and a
+    ``content.fullText`` that is a string when present."""
     document = response.get("document")
     if not isinstance(document, dict):
         raise LexAPIToolError.unreadable()
@@ -194,8 +196,11 @@ def _check_document_shape(response: DocumentResponse) -> None:
 
 
 def _check_as_of_shape(response: LegislationAsOfResponse) -> None:
-    """An as-of answer must name the act by a non-empty CELEX string and say
-    whether it is resolved with a boolean."""
+    """Checks on an as-of answer in addition to the SDK's.
+
+    The SDK checks the documented fields (``document`` a string,
+    ``asOfResolved`` a boolean, ``act`` and ``provenance`` objects); these
+    checks repeat the first two and add that ``document`` is not blank."""
     document = response.get("document")
     if not isinstance(document, str) or not document.strip():
         raise LexAPIToolError.unreadable()
@@ -259,10 +264,15 @@ def _render(
             shown.append(passage)
             remaining -= length
             continue
-        if not shown and passage.text is not None:
-            text, cut = cut_text(passage.text, remaining)
-            shown.append(dataclasses.replace(passage, text=text))
-            truncated += cut
+        if not shown:
+            # The first passage is always shown: a text is cut to the budget,
+            # a notice (which cannot be cut) is shown whole.
+            if passage.text is not None:
+                text, cut = cut_text(passage.text, remaining)
+                shown.append(dataclasses.replace(passage, text=text))
+                truncated += cut
+            else:
+                shown.append(passage)
         break
     rest = kept[len(shown) :]
     if shown:
@@ -576,9 +586,9 @@ class LexAPIToolSpec(BaseToolSpec):
         """Read an EU document by its CELEX number: one article, or its articles in order.
 
         Args:
-            celex: CELEX number of the document, e.g. 32016R0679.
-            article: art_17, 17 or 'Article 17'.
-            language: Optional two-letter language code, e.g. en.
+            celex: CELEX number of the document, for example 32016R0679.
+            article: Optional article to read: art_17, 17 or 'Article 17'.
+            language: Optional language of the text (ISO 639-1, for example en).
         """
         self._check_read(celex, language)
         client = self._clients.sync
@@ -610,11 +620,10 @@ class LexAPIToolSpec(BaseToolSpec):
         """The version of an EU act LexAPI lists for a date, and optionally one provision.
 
         Args:
-            celex: CELEX number of the act, e.g. 32016R0679.
+            celex: CELEX number of an EU regulation, directive or decision.
             as_of: The date, YYYY-MM-DD.
-            provision: Optional provision: art_17, 17 or 'Article 17', anx_III, rct_26 or
-                rct_26-28.
-            language: Optional two-letter language code, e.g. en.
+            provision: Optional article (art_17), annex (anx_III) or recitals (rct_26-28).
+            language: Optional language of the text (ISO 639-1, for example en).
         """
         self._check_as_of(celex, as_of, language)
         client = self._clients.sync
@@ -694,11 +703,11 @@ def read_description(max_chars: int | None) -> str:
 
 
 AS_OF_DESCRIPTION = (
-    "The version of an EU act that LexAPI lists for a date (as_of, YYYY-MM-DD), and "
-    "optionally one provision of it, followed by a Source line with its CELEX citation. "
-    "When LexAPI did not establish the text for that date, the answer is a notice without "
-    "text. It does not say whether a provision applied on that date. Consolidated texts have "
-    "no legal force; the Source line names the act to cite when LexAPI knows it."
+    "Get the version of an EU act listed for a date (YYYY-MM-DD) and, optionally, one "
+    "provision of it (art_17, anx_III, rct_26-28). If LexAPI cannot establish the text for "
+    "that date, you get a notice with the reason and no text. It does not say whether a "
+    "provision applied on that date. Consolidated texts have no legal force; the Source line "
+    "names the act to cite when LexAPI knows it."
 )
 
 
@@ -715,29 +724,42 @@ class SearchLegislationArgs(BaseModel):
 
 
 class ReadDocumentArgs(BaseModel):
-    celex: str = Field(min_length=1, description="CELEX number of the document, e.g. 32016R0679.")
-    article: str | None = Field(default=None, description="art_17, 17 or 'Article 17'")
-    language: str | None = Field(
-        default=None,
-        pattern=_LANGUAGE_PATTERN,
-        description="Optional two-letter language code of the text, e.g. en, de, fr.",
+    celex: str = Field(
+        min_length=1, description="CELEX number of the document, for example 32016R0679."
     )
-
-
-class LegislationAsOfArgs(BaseModel):
-    celex: str = Field(min_length=1, description="CELEX number of the act, e.g. 32016R0679.")
-    as_of: str = Field(pattern=_DATE_PATTERN, description="The date, YYYY-MM-DD.")
-    provision: str | None = Field(
+    article: str | None = Field(
         default=None,
         description=(
-            "Optional provision: a whole article (art_17, 17 or 'Article 17'), an annex "
-            "(anx_III) or recitals (rct_26 or rct_26-28). Without it only the version is named."
+            "Optional article to read: art_17, 17 or 'Article 17'. Leave it out to read the "
+            "document's articles from the start."
         ),
     )
     language: str | None = Field(
         default=None,
         pattern=_LANGUAGE_PATTERN,
-        description="Optional two-letter language code of the text, e.g. en, de, fr.",
+        description="Optional language of the text (ISO 639-1, for example en).",
+    )
+
+
+class LegislationAsOfArgs(BaseModel):
+    celex: str = Field(
+        min_length=1,
+        description=(
+            "CELEX number of an EU regulation, directive or decision, for example 32016R0679."
+        ),
+    )
+    as_of: str = Field(pattern=_DATE_PATTERN, description="The date, YYYY-MM-DD.")
+    provision: str | None = Field(
+        default=None,
+        description=(
+            "Optional article (art_17), annex (anx_III) or recitals (rct_26-28). Leave it out to "
+            "get only the version for the date."
+        ),
+    )
+    language: str | None = Field(
+        default=None,
+        pattern=_LANGUAGE_PATTERN,
+        description="Optional language of the text (ISO 639-1, for example en).",
     )
 
 

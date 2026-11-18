@@ -24,3 +24,8 @@
   before any request.
 - The read budget counts the texts and notices as they are shown.
 - Cut rule as in the retrievers package.
+- Depends on `lexapi-client` from its repository at commit `19da4dd` until
+  0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).
+- Read answers must carry a non-empty `celex` string and a string
+  `content.fullText` when present; the first passage of a read is always
+  shown, a notice whole.

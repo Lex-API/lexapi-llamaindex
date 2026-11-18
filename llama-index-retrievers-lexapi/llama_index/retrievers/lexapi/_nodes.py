@@ -19,10 +19,10 @@ from lexapi.passages import Passage, PassageResult
 DISTRIBUTION = "llama-index-retrievers-lexapi"
 
 #: Metadata keys hidden from the LLM view of a node
-#: (``node.get_content(MetadataMode.LLM)``), so the model reads each fact
-#: once: ``cite_celex``, ``consolidated``, ``consolidated_note``, the
-#: ``as_of`` fields and ``text_status`` stay visible, and the citation is
-#: read once, in the node text's ``Source:`` line. With
+#: (``node.get_content(MetadataMode.LLM)``). The citation is read once, in
+#: the node text's ``Source:`` line; the keys the model sees are the other
+#: keys, among them ``cite_celex``, ``consolidated``, ``consolidated_note``,
+#: the ``as_of`` fields and ``text_status``. With
 #: ``include_citation_in_text=False`` the node text has no ``Source:`` line,
 #: so ``citation`` is not hidden.
 #:

@@ -137,7 +137,8 @@ to the model as the tool's error output.
 - Anything shaped like an API key is masked as `lex_***`.
 
 An error is never turned into an empty answer. An answer LexAPI's client
-cannot read raises an error; it is never read as an empty result. An answer
+cannot read raises an error; it is never read as an empty result, and a 2xx
+answer is never retried. An answer
 says nothing matched when the search had no hits, when `unresolved="drop"`
 left every hit out, or when the API sent hits without a CELEX number.
 

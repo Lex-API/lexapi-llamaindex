@@ -1,0 +1,283 @@
+[
+  {
+    "config": {
+      "unresolved": "withhold"
+    },
+    "name": "lexapi_search_legislation",
+    "description": "Search EU legislation (EUR-Lex) by meaning. Returns matching articles, each followed by a Source line with its CELEX citation. With as_of (YYYY-MM-DD) it asks for the text for that date; an article whose text LexAPI did not establish for that date comes back as a notice without text. Consolidated texts have no legal force; the Source line names the act to cite when LexAPI knows it.",
+    "parameters": {
+      "properties": {
+        "query": {
+          "description": "What to look for, in plain words.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "as_of": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional date, YYYY-MM-DD: return the text for that date. Leave it out for the latest text."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "config": {
+      "unresolved": "drop"
+    },
+    "name": "lexapi_search_legislation",
+    "description": "Search EU legislation (EUR-Lex) by meaning. Returns matching articles, each followed by a Source line with its CELEX citation. With as_of (YYYY-MM-DD) it asks for the text for that date; an article whose text LexAPI did not establish for that date is left out, and the output says how many were left out. Consolidated texts have no legal force; the Source line names the act to cite when LexAPI knows it.",
+    "parameters": {
+      "properties": {
+        "query": {
+          "description": "What to look for, in plain words.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "as_of": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional date, YYYY-MM-DD: return the text for that date. Leave it out for the latest text."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "config": {
+      "unresolved": "keep_labelled"
+    },
+    "name": "lexapi_search_legislation",
+    "description": "Search EU legislation (EUR-Lex) by meaning. Returns matching articles, each followed by a Source line with its CELEX citation. With as_of (YYYY-MM-DD) it asks for the text for that date; for an article whose text LexAPI did not establish for that date you get its latest text, under a label saying it is not established for that date. Consolidated texts have no legal force; the Source line names the act to cite when LexAPI knows it.",
+    "parameters": {
+      "properties": {
+        "query": {
+          "description": "What to look for, in plain words.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "as_of": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional date, YYYY-MM-DD: return the text for that date. Leave it out for the latest text."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "config": {},
+    "name": "lexapi_read_document",
+    "description": "Read an EU document by its CELEX number: one article (article argument), or its articles in order. Each passage is followed by a Source line with its CELEX citation. Consolidated texts (CELEX starting with 0) have no legal force: cite the act as published in the Official Journal. The output is limited by a character budget of 20000 characters of text; the articles not shown are listed by reference.",
+    "parameters": {
+      "properties": {
+        "celex": {
+          "description": "CELEX number of the document, for example 32016R0679.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "article": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional article to read: art_17, 17 or 'Article 17'. Leave it out to read the document's articles from the start."
+        },
+        "language": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional language of the text (ISO 639-1, for example en)."
+        }
+      },
+      "required": [
+        "celex"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "config": {
+      "max_chars": 5000
+    },
+    "name": "lexapi_read_document",
+    "description": "Read an EU document by its CELEX number: one article (article argument), or its articles in order. Each passage is followed by a Source line with its CELEX citation. Consolidated texts (CELEX starting with 0) have no legal force: cite the act as published in the Official Journal. The output is limited by a character budget of 5000 characters of text; the articles not shown are listed by reference.",
+    "parameters": {
+      "properties": {
+        "celex": {
+          "description": "CELEX number of the document, for example 32016R0679.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "article": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional article to read: art_17, 17 or 'Article 17'. Leave it out to read the document's articles from the start."
+        },
+        "language": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional language of the text (ISO 639-1, for example en)."
+        }
+      },
+      "required": [
+        "celex"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "config": {
+      "max_chars": null
+    },
+    "name": "lexapi_read_document",
+    "description": "Read an EU document by its CELEX number: one article (article argument), or its articles in order. Each passage is followed by a Source line with its CELEX citation. Consolidated texts (CELEX starting with 0) have no legal force: cite the act as published in the Official Journal.",
+    "parameters": {
+      "properties": {
+        "celex": {
+          "description": "CELEX number of the document, for example 32016R0679.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "article": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional article to read: art_17, 17 or 'Article 17'. Leave it out to read the document's articles from the start."
+        },
+        "language": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional language of the text (ISO 639-1, for example en)."
+        }
+      },
+      "required": [
+        "celex"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "config": {},
+    "name": "lexapi_legislation_as_of",
+    "description": "Get the version of an EU act listed for a date (YYYY-MM-DD) and, optionally, one provision of it (art_17, anx_III, rct_26-28). If LexAPI cannot establish the text for that date, you get a notice with the reason and no text. It does not say whether a provision applied on that date. Consolidated texts have no legal force; the Source line names the act to cite when LexAPI knows it.",
+    "parameters": {
+      "properties": {
+        "celex": {
+          "description": "CELEX number of an EU regulation, directive or decision, for example 32016R0679.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "as_of": {
+          "description": "The date, YYYY-MM-DD.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "type": "string"
+        },
+        "provision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional article (art_17), annex (anx_III) or recitals (rct_26-28). Leave it out to get only the version for the date."
+        },
+        "language": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional language of the text (ISO 639-1, for example en)."
+        }
+      },
+      "required": [
+        "celex",
+        "as_of"
+      ],
+      "type": "object"
+    }
+  }
+]

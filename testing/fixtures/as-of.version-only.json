@@ -1,6 +1,9 @@
 {
   "success": true,
   "document": "32099R0001",
+  "act": {
+    "celex": "32099R0001"
+  },
   "language": "en",
   "asOf": "2099-06-01",
   "asOfResolved": true,
