@@ -19,16 +19,36 @@ from lexapi.passages import Passage, PassageResult
 DISTRIBUTION = "llama-index-retrievers-lexapi"
 
 #: Metadata keys hidden from the LLM view of a node
-#: (``node.get_content(MetadataMode.LLM)``). The rest stays visible, in
-#: particular ``citation``, ``cite_celex``, ``consolidated``, ``as_of``,
-#: ``as_of_resolved``, ``as_of_reason`` and ``text_status``.
+#: (``node.get_content(MetadataMode.LLM)``), so the model reads each fact
+#: once: ``cite_celex``, ``consolidated``, ``consolidated_note``, the
+#: ``as_of`` fields and ``text_status`` stay visible, and the citation is
+#: read once, in the node text's ``Source:`` line. With
+#: ``include_citation_in_text=False`` the node text has no ``Source:`` line,
+#: so ``citation`` is not hidden.
 #:
-#: - ``score`` and ``id``: retrieval bookkeeping, not part of the source.
-#: - ``url``: already the last part of ``citation``.
+#: - ``citation``: the ``Source:`` line of the node text.
+#: - ``celex``, ``base_celex``, ``version_*``: in ``citation``; the number to
+#:   cite is ``cite_celex``.
+#: - ``text_withheld``: the same fact as ``text_status``.
+#: - ``score``, ``id``: retrieval bookkeeping, not part of the source.
+#: - ``url``: the last part of ``citation``.
 #: - ``kind``: which LexAPI call produced the passage.
-#: - ``eli``: a second identifier of the document; ``citation`` names the
-#:   CELEX number to cite.
-EXCLUDED_LLM_METADATA_KEYS: tuple[str, ...] = ("eli", "id", "kind", "score", "url")
+#: - ``eli``: a second identifier of the document.
+EXCLUDED_LLM_METADATA_KEYS: tuple[str, ...] = (
+    "base_celex",
+    "celex",
+    "citation",
+    "eli",
+    "id",
+    "kind",
+    "score",
+    "text_withheld",
+    "url",
+    "version_celex",
+    "version_date",
+    "version_kind",
+    "version_valid_until",
+)
 
 #: Smallest accepted ``max_chars``.
 MIN_MAX_CHARS = 200
@@ -115,23 +135,24 @@ def dedupe(
 def cut_text(text: str, max_chars: int) -> tuple[str, bool]:
     """``text`` within ``max_chars`` characters, and whether it was cut.
 
-    Leading whitespace is dropped; a text that then fits is returned as it
-    is. Otherwise the cut is made at the last blank line at or before
-    ``max_chars``, else the last line break, else the last space, else at
-    ``max_chars``, never leaving nothing; a note saying so follows.
+    A text of at most ``max_chars`` characters is returned unchanged.
+    Otherwise leading whitespace is dropped and the text is cut at a
+    paragraph break when one falls in the second half of the limit,
+    otherwise at a line break or a space there, otherwise at the limit;
+    a note saying so follows.
     """
+    if len(text) <= max_chars:
+        return text, False
     body = text.lstrip()
     if len(body) <= max_chars:
         return body, False
-    cut = 0
+    cut = max_chars
     for separator in ("\n\n", "\n", " "):
-        position = body.rfind(separator, 0, max_chars + len(separator))
-        if position > 0:
-            cut = position
+        at = body.rfind(separator, 0, max_chars + len(separator))
+        if at > 0 and max_chars // 2 <= at <= max_chars:
+            cut = at
             break
-    if cut <= 0:
-        cut = max_chars
-    kept = body[:cut].rstrip()
+    kept = body[:cut].rstrip() or body[:max_chars]
     note = (
         f"[Text cut by {DISTRIBUTION}: {len(kept)} of {len(text)} characters shown. "
         "The full text is at the source.]"
@@ -170,7 +191,11 @@ def passage_to_node(
         # Nothing of the metadata is embedded: it describes the citation,
         # not the text.
         excluded_embed_metadata_keys=sorted(metadata),
-        excluded_llm_metadata_keys=list(EXCLUDED_LLM_METADATA_KEYS),
+        excluded_llm_metadata_keys=[
+            key
+            for key in EXCLUDED_LLM_METADATA_KEYS
+            if include_citation_in_text or key != "citation"
+        ],
     )
     return NodeWithScore(node=node, score=passage.score)
 

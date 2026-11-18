@@ -29,6 +29,10 @@ def user_agent_suffix() -> str:
     return f"{DISTRIBUTION}/{installed}"
 
 
+class ClientClosedError(RuntimeError):
+    """An instance was used after ``close()`` / ``aclose()``."""
+
+
 class _Secret:
     """Holds the API key; never shows it."""
 
@@ -87,9 +91,13 @@ class Clients:
         self._async = None
         self._owned = True
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     def check_open(self) -> None:
         if self._closed:
-            raise RuntimeError(f"{self._owner} is closed; create a new one.")
+            raise ClientClosedError(f"{self._owner} is closed; create a new one.")
 
     @property
     def passed_in(self) -> bool:
@@ -101,8 +109,8 @@ class Clients:
         self.check_open()
         if self._sync is None:
             raise ValueError(
-                f"{self._owner} was given only an async_client; use the async methods, "
-                "or pass a lexapi.LexAPI as client as well."
+                f"{self._owner} was given only an async_client; use the async methods "
+                "or pass client= as well"
             )
         return self._sync
 

@@ -55,6 +55,7 @@ T = TypeVar("T")
 # line of defence: no message this package builds contains the key.
 _KEY_PATTERN = re.compile(r"lex_[A-Za-z0-9_-]+")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_LANGUAGE = re.compile(r"[a-z]{2}")
 _DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 _LANGUAGE_PATTERN = r"^[a-z]{2}$"
 _UNREADABLE = "The answer could not be read."
@@ -70,13 +71,14 @@ class LexAPIToolError(Exception):
     For an error the API answered, the message is ``LexAPI error <code>
     (HTTP <status>): <message>``, followed when known by ``Credits reset at
     <time>.``, ``Billing: <url>`` and ``Retry after <n> s.``. An answer that
-    could not be read gives the fixed ``LexAPI error INVALID_RESPONSE (HTTP
-    <status>): The answer could not be read.``. An invalid argument gives
+    could not be read, or one of the wrong shape, gives the fixed ``LexAPI
+    error INVALID_RESPONSE (HTTP <status>): The answer could not be read.``
+    (without the status when there is none). An invalid argument gives
     ``Invalid argument: ...`` before any request is sent. LlamaIndex agents
     pass the message to the model as the tool's error output.
 
-    The SDK's exception is not attached (neither ``__cause__`` nor
-    ``__context__``): its message can quote the response body.
+    SDK exceptions are not attached (neither ``__cause__`` nor
+    ``__context__``); an API error's message is the API's own text.
     """
 
     def __init__(
@@ -115,11 +117,13 @@ class LexAPIToolError(Exception):
         return cls(_mask(message), code=error.code, status=status, retry_after=error.retry_after)
 
     @classmethod
-    def invalid_argument(cls, name: str, value: object) -> "LexAPIToolError":
+    def invalid_argument(cls, text: str) -> "LexAPIToolError":
+        return cls(_mask(f"Invalid argument: {text}"), code="INVALID_ARGUMENT", status=None)
+
+    @classmethod
+    def unreadable(cls) -> "LexAPIToolError":
         return cls(
-            _mask(f"Invalid argument: {name} must be a date in the form YYYY-MM-DD; got '{value}'"),
-            code="INVALID_ARGUMENT",
-            status=None,
+            f"LexAPI error INVALID_RESPONSE: {_UNREADABLE}", code="INVALID_RESPONSE", status=None
         )
 
 
@@ -146,7 +150,49 @@ def _check_date(value: object, name: str = "as_of") -> None:
             pass
         else:
             return
-    raise LexAPIToolError.invalid_argument(name, value)
+    raise LexAPIToolError.invalid_argument(
+        f"{name} must be a date in the form YYYY-MM-DD; got '{value}'"
+    )
+
+
+def _check_not_empty(value: object, name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise LexAPIToolError.invalid_argument(f"{name} must not be empty")
+
+
+def _check_language(value: object) -> None:
+    if value is not None and not (isinstance(value, str) and _LANGUAGE.fullmatch(value)):
+        raise LexAPIToolError.invalid_argument(
+            f"language must be a two-letter code such as en; got '{value}'"
+        )
+
+
+def _check_document_shape(response: DocumentResponse) -> None:
+    """A read answer must carry ``document`` as an object, ``content`` as an
+    object or null, and ``content.articles`` as a list of objects."""
+    document = response.get("document")
+    if not isinstance(document, dict):
+        raise LexAPIToolError.unreadable()
+    content = document.get("content")
+    if content is None:
+        return
+    if not isinstance(content, dict):
+        raise LexAPIToolError.unreadable()
+    articles = content.get("articles")
+    if articles is None:
+        return
+    if not isinstance(articles, list) or not all(isinstance(a, dict) for a in articles):
+        raise LexAPIToolError.unreadable()
+
+
+def _check_as_of_shape(response: LegislationAsOfResponse) -> None:
+    """An as-of answer must name the act by a non-empty CELEX string and say
+    whether it is resolved with a boolean."""
+    document = response.get("document")
+    if not isinstance(document, str) or not document.strip():
+        raise LexAPIToolError.unreadable()
+    if not isinstance(response.get("asOfResolved"), bool):
+        raise LexAPIToolError.unreadable()
 
 
 def _call(fn: Callable[[], T]) -> T:
@@ -173,8 +219,6 @@ async def _acall(make: Callable[[], Awaitable[T]]) -> T:
 
 def _body_length(passage: Passage) -> int:
     """Characters of a passage's text or notice, as counted by the budget."""
-    if passage.text is not None and passage.text_status == "provided":
-        return len(passage.text.lstrip())
     return len(passage.content())
 
 
@@ -401,6 +445,29 @@ class LexAPIToolSpec(BaseToolSpec):
 
     # ── helpers ─────────────────────────────────────────────────────────
 
+    def _check_open(self) -> None:
+        if self._clients.closed:
+            raise LexAPIToolError(
+                f"{type(self).__name__} is closed; create a new one.", code="CLOSED", status=None
+            )
+
+    def _check_search(self, query: object, as_of: object) -> None:
+        self._check_open()
+        _check_not_empty(query, "query")
+        if as_of is not None:
+            _check_date(as_of)
+
+    def _check_read(self, celex: object, language: object) -> None:
+        self._check_open()
+        _check_not_empty(celex, "celex")
+        _check_language(language)
+
+    def _check_as_of(self, celex: object, as_of: object, language: object) -> None:
+        self._check_open()
+        _check_not_empty(celex, "celex")
+        _check_date(as_of)
+        _check_language(language)
+
     def _emit(self, tool: str, report: LexAPICallReport, result: PassageResult) -> None:
         dispatcher.event(LexAPIToolEvent(tool=tool, report=report, result=result))
 
@@ -438,6 +505,7 @@ class LexAPIToolSpec(BaseToolSpec):
         }
 
     def _document_result(self, response: DocumentResponse, celex: str, article: str | None) -> str:
+        _check_document_shape(response)
         result = passages.from_document(response)
         empty = (
             f"LexAPI returned no text for article {article} of CELEX {celex}."
@@ -453,17 +521,16 @@ class LexAPIToolSpec(BaseToolSpec):
     def _as_of_result(
         self, response: LegislationAsOfResponse, celex: str, provision: str | None
     ) -> str:
+        _check_as_of_shape(response)
         # Always withheld: an answer LexAPI did not establish carries no
         # text, whatever the spec's search policy.
         result = passages.from_legislation_as_of(
             response, provision=provision, unresolved="withhold"
         )
-        text, report = _render(
-            result,
-            requested=None,
-            empty=f"LexAPI returned no answer for CELEX {celex}.",
-            numbered=False,
-        )
+        if not result.passages:
+            # A well-formed answer always gives one passage.
+            raise LexAPIToolError.unreadable()
+        text, report = _render(result, requested=None, empty="", numbered=False)
         self._emit("lexapi_legislation_as_of", report, result)
         return text
 
@@ -473,11 +540,11 @@ class LexAPIToolSpec(BaseToolSpec):
         """Search EU legislation by meaning; matching articles, each with a Source line.
 
         Args:
-            query: What to look for, in plain language.
-            as_of: Optional date, YYYY-MM-DD.
+            query: What to look for, in plain words.
+            as_of: Optional date, YYYY-MM-DD: return the text for that date. Leave it out
+                for the latest text.
         """
-        if as_of is not None:
-            _check_date(as_of)
+        self._check_search(query, as_of)
         client = self._clients.sync
         response = _call(
             lambda: client.semantic_legislation_search(query, **self._search_kwargs(as_of))
@@ -486,8 +553,7 @@ class LexAPIToolSpec(BaseToolSpec):
 
     async def alexapi_search_legislation(self, query: str, as_of: str | None = None) -> str:
         """Async variant of lexapi_search_legislation."""
-        if as_of is not None:
-            _check_date(as_of)
+        self._check_search(query, as_of)
         client = self._clients.async_
         if client is None:
             return await self._in_thread(self.lexapi_search_legislation, query, as_of)
@@ -503,9 +569,10 @@ class LexAPIToolSpec(BaseToolSpec):
 
         Args:
             celex: CELEX number of the document, e.g. 32016R0679.
-            article: Optional article, e.g. art_17 or 17.
+            article: art_17, 17 or 'Article 17'.
             language: Optional two-letter language code, e.g. en.
         """
+        self._check_read(celex, language)
         client = self._clients.sync
         response = _call(
             lambda: client.get_document(celex, **self._document_kwargs(article, language))
@@ -516,6 +583,7 @@ class LexAPIToolSpec(BaseToolSpec):
         self, celex: str, article: str | None = None, language: str | None = None
     ) -> str:
         """Async variant of lexapi_read_document."""
+        self._check_read(celex, language)
         client = self._clients.async_
         if client is None:
             return await self._in_thread(self.lexapi_read_document, celex, article, language)
@@ -536,10 +604,11 @@ class LexAPIToolSpec(BaseToolSpec):
         Args:
             celex: CELEX number of the act, e.g. 32016R0679.
             as_of: The date, YYYY-MM-DD.
-            provision: Optional provision, e.g. art_17, anx_III or rct_26.
+            provision: Optional provision: art_17, 17 or 'Article 17', anx_III, rct_26 or
+                rct_26-28.
             language: Optional two-letter language code, e.g. en.
         """
-        _check_date(as_of)
+        self._check_as_of(celex, as_of, language)
         client = self._clients.sync
         response = _call(
             lambda: client.legislation_as_of(
@@ -556,7 +625,7 @@ class LexAPIToolSpec(BaseToolSpec):
         language: str | None = None,
     ) -> str:
         """Async variant of lexapi_legislation_as_of."""
-        _check_date(as_of)
+        self._check_as_of(celex, as_of, language)
         client = self._clients.async_
         if client is None:
             return await self._in_thread(
@@ -604,7 +673,9 @@ def search_description(policy: str) -> str:
 def read_description(max_chars: int | None) -> str:
     lead = (
         "Read an EU document by its CELEX number: one article (article argument), or its "
-        "articles in order. Each passage is followed by a Source line with its CELEX citation."
+        "articles in order. Each passage is followed by a Source line with its CELEX citation. "
+        "Consolidated texts (CELEX starting with 0) have no legal force: cite the act as "
+        "published in the Official Journal."
     )
     if max_chars is None:
         return lead
@@ -618,22 +689,26 @@ AS_OF_DESCRIPTION = (
     "The version of an EU act that LexAPI lists for a date (as_of, YYYY-MM-DD), and "
     "optionally one provision of it, followed by a Source line with its CELEX citation. "
     "When LexAPI did not establish the text for that date, the answer is a notice without "
-    "text."
+    "text. It does not say whether a provision applied on that date. Consolidated texts have "
+    "no legal force; the Source line names the act to cite when LexAPI knows it."
 )
 
 
 class SearchLegislationArgs(BaseModel):
-    query: str = Field(min_length=1, description="What to look for, in plain language.")
+    query: str = Field(min_length=1, description="What to look for, in plain words.")
     as_of: str | None = Field(
-        default=None, pattern=_DATE_PATTERN, description="Optional date, YYYY-MM-DD."
+        default=None,
+        pattern=_DATE_PATTERN,
+        description=(
+            "Optional date, YYYY-MM-DD: return the text for that date. Leave it out for the "
+            "latest text."
+        ),
     )
 
 
 class ReadDocumentArgs(BaseModel):
     celex: str = Field(min_length=1, description="CELEX number of the document, e.g. 32016R0679.")
-    article: str | None = Field(
-        default=None, description="Optional article to read, e.g. art_17 or 17."
-    )
+    article: str | None = Field(default=None, description="art_17, 17 or 'Article 17'")
     language: str | None = Field(
         default=None,
         pattern=_LANGUAGE_PATTERN,
@@ -647,8 +722,8 @@ class LegislationAsOfArgs(BaseModel):
     provision: str | None = Field(
         default=None,
         description=(
-            "Optional provision, e.g. art_17, anx_III or rct_26. Without it only the version "
-            "is named."
+            "Optional provision: a whole article (art_17, 17 or 'Article 17'), an annex "
+            "(anx_III) or recitals (rct_26 or rct_26-28). Without it only the version is named."
         ),
     )
     language: str | None = Field(

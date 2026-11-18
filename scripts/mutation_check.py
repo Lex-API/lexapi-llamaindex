@@ -23,6 +23,7 @@ TOOLS = "llama-index-tools-lexapi"
 RET_BASE = f"{RET}/llama_index/retrievers/lexapi/base.py"
 RET_NODES = f"{RET}/llama_index/retrievers/lexapi/_nodes.py"
 TOOLS_BASE = f"{TOOLS}/llama_index/tools/lexapi/base.py"
+TOOLS_PASSAGES = f"{TOOLS}/llama_index/tools/lexapi/_passages.py"
 
 
 @dataclass(frozen=True)
@@ -95,8 +96,8 @@ MUTANTS = [
     Mutant(
         "guardrail key hidden from the LLM",
         RET_NODES,
-        '("eli", "id", "kind", "score", "url")',
-        '("as_of_reason", "eli", "id", "kind", "score", "url")',
+        'EXCLUDED_LLM_METADATA_KEYS: tuple[str, ...] = (\n    "base_celex",',
+        'EXCLUDED_LLM_METADATA_KEYS: tuple[str, ...] = (\n    "as_of_reason",\n    "base_celex",',
     ),
     Mutant(
         "API key kept on the retriever",
@@ -196,7 +197,7 @@ MUTANTS = [
         "        self._async = None\n        self._owned = True",
         "        self._async = AsyncLexAPI(api_key, **self._kwargs)\n        self._owned = True",
     ),
-    # ── retrievers: parity ──
+    # ── retrievers: cut rule, dates, report, lifecycle ──
     Mutant(
         "cut rule: no space fallback (retrievers)",
         RET_NODES,
@@ -224,7 +225,7 @@ MUTANTS = [
     Mutant(
         "closed instance still answers",
         f"{RET}/llama_index/retrievers/lexapi/_client.py",
-        '            raise RuntimeError(f"{self._owner} is closed; create a new one.")',
+        '            raise ClientClosedError(f"{self._owner} is closed; create a new one.")',
         "            pass",
     ),
     Mutant(
@@ -242,7 +243,7 @@ MUTANTS = [
         "        return fn()\n    except LexAPIError:\n        return None  # type: ignore",
     ),
     Mutant(
-        "F1: SDK error chained to the tool error",
+        "SDK error chained to the tool error",
         TOOLS_BASE,
         "        return fn()\n    except LexAPIError as error:\n"
         "        failure = LexAPIToolError.from_sdk(error)",
@@ -250,7 +251,7 @@ MUTANTS = [
         "        raise LexAPIToolError.from_sdk(error) from None",
     ),
     Mutant(
-        "F1: unreadable answer passes the SDK message on",
+        "unreadable answer passes the SDK message on",
         TOOLS_BASE,
         "        if isinstance(error, InvalidResponseError) or (",
         "        if False and (",
@@ -316,13 +317,13 @@ MUTANTS = [
         '**tool_metadata("withhold", self._max_chars),',
     ),
     Mutant(
-        "F3: read budget ignored",
+        "read budget ignored",
         TOOLS_BASE,
         "max_chars=self._max_chars, celex=celex",
         "max_chars=None, celex=celex",
     ),
     Mutant(
-        "F3: budget counts Source lines",
+        "read budget counts Source lines",
         TOOLS_BASE,
         "        length = _body_length(passage)",
         "        length = len(passages.format_passage(passage))",
@@ -336,8 +337,8 @@ MUTANTS = [
     Mutant(
         "tool date not validated",
         TOOLS_BASE,
-        "    raise LexAPIToolError.invalid_argument(name, value)",
-        "    return",
+        '    raise LexAPIToolError.invalid_argument(\n        f"{name} must be a date',
+        '    return\n    raise LexAPIToolError.invalid_argument(\n        f"{name} must be a date',
     ),
     Mutant(
         "as-of schema without the date pattern",
@@ -374,6 +375,85 @@ MUTANTS = [
         TOOLS_BASE,
         '"Search EU legislation (EUR-Lex) by meaning. Returns matching articles, each followed "',
         '"Search EU legislation in force (EUR-Lex) by meaning. Returns matching articles, "',
+    ),
+    # ── malformed answers, read budget, cut rule, arguments, LLM view ──
+    Mutant(
+        "read answer shape not checked",
+        TOOLS_BASE,
+        "        _check_document_shape(response)\n",
+        "",
+    ),
+    Mutant(
+        "as-of answer shape not checked",
+        TOOLS_BASE,
+        "        _check_as_of_shape(response)\n",
+        "",
+    ),
+    Mutant(
+        "as-of resolved flag not checked",
+        TOOLS_BASE,
+        '    if not isinstance(response.get("asOfResolved"), bool):',
+        "    if False:",
+    ),
+    Mutant(
+        "articles not checked as objects",
+        TOOLS_BASE,
+        "not all(isinstance(a, dict) for a in articles)",
+        "False",
+    ),
+    Mutant(
+        "read budget counts the stripped text",
+        TOOLS_BASE,
+        "    return len(passage.content())",
+        "    return len((passage.text or passage.content()).lstrip())",
+    ),
+    Mutant(
+        "cut rule takes a break in the first half (retrievers)",
+        RET_NODES,
+        "        if at > 0 and max_chars // 2 <= at <= max_chars:",
+        "        if at > 0:",
+    ),
+    Mutant(
+        "cut rule takes a break in the first half (tools)",
+        TOOLS_PASSAGES,
+        "        if at > 0 and max_chars // 2 <= at <= max_chars:",
+        "        if at > 0:",
+    ),
+    Mutant(
+        "cut rule strips a text that fits",
+        RET_NODES,
+        "    if len(text) <= max_chars:\n        return text, False",
+        "    if len(text.lstrip()) <= max_chars:\n        return text.lstrip(), False",
+    ),
+    Mutant(
+        "empty query sent",
+        TOOLS_BASE,
+        '        _check_not_empty(query, "query")',
+        "        pass",
+    ),
+    Mutant(
+        "read language not checked",
+        TOOLS_BASE,
+        '        _check_not_empty(celex, "celex")\n        _check_language(language)\n\n',
+        '        _check_not_empty(celex, "celex")\n\n',
+    ),
+    Mutant(
+        "citation shown twice to the LLM",
+        RET_NODES,
+        '    "celex",\n    "citation",\n    "eli",',
+        '    "celex",\n    "eli",',
+    ),
+    Mutant(
+        "citation hidden without the Source line",
+        RET_NODES,
+        'if include_citation_in_text or key != "citation"',
+        "if True",
+    ),
+    Mutant(
+        "closed tool spec reaches the client",
+        TOOLS_BASE,
+        "        if self._clients.closed:",
+        "        if False:",
     ),
 ]
 

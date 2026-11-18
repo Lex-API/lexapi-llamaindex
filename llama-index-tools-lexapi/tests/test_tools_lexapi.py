@@ -121,13 +121,16 @@ def search_text(policy: str) -> str:
 
 READ_LEAD = (
     "Read an EU document by its CELEX number: one article (article argument), or its "
-    "articles in order. Each passage is followed by a Source line with its CELEX citation."
+    "articles in order. Each passage is followed by a Source line with its CELEX citation. "
+    "Consolidated texts (CELEX starting with 0) have no legal force: cite the act as "
+    "published in the Official Journal."
 )
 AS_OF_TEXT = (
     "The version of an EU act that LexAPI lists for a date (as_of, YYYY-MM-DD), and "
     "optionally one provision of it, followed by a Source line with its CELEX citation. "
     "When LexAPI did not establish the text for that date, the answer is a notice without "
-    "text."
+    "text. It does not say whether a provision applied on that date. Consolidated texts have "
+    "no legal force; the Source line names the act to cite when LexAPI knows it."
 )
 SIGNATURES = {
     "lexapi_search_legislation": "(query: str, as_of: str | None = None) -> str",
@@ -229,7 +232,7 @@ def test_descriptions_make_no_compliance_or_advice_claims(policy: Any) -> None:
         (t.metadata.description or "") + json.dumps(t.metadata.get_parameters_dict())
         for t in spec.to_tool_list()
     ).lower()
-    for word in ("complian", "legal advice", "in force", "guarantee", "accurate", "official"):
+    for word in ("complian", "legal advice", "in force", "guarantee", "accurate"):
         assert word not in text
 
 
@@ -513,8 +516,18 @@ def test_cut_rule_bounds(text: str, kept: str) -> None:
     assert f"{len(kept)} of {len(text)} characters shown" in out
 
 
-def test_cut_rule_returns_a_fitting_text_stripped() -> None:
-    assert cut_text("\n  short", 200) == ("short", False)
+def test_cut_rule_returns_a_fitting_text_unchanged() -> None:
+    assert cut_text("\n  short", 200) == ("\n  short", False)
+
+
+def test_cut_rule_ignores_a_break_in_the_first_half() -> None:
+    words = " ".join(f"word{n}" for n in range(2000))
+    text = "Heading\n\n" + words
+    out, cut = cut_text(text, 4000)
+    kept = out.split("\n[Text cut by ", 1)[0]
+    assert cut
+    assert 3990 <= len(kept) <= 4000
+    assert text.startswith(kept) and text[len(kept)] == " "
 
 
 # ── as of a date ────────────────────────────────────────────────────────
@@ -560,14 +573,13 @@ def test_legislation_as_of_always_withholds(policy: Any) -> None:
     assert "amendment_not_consolidated" in out
 
 
-def test_legislation_as_of_without_a_document() -> None:
+def test_legislation_as_of_without_a_document_is_unreadable() -> None:
     body = load_fixture("as-of.unresolved.json")
     body["document"] = None
     spec, _ = spec_for({ASOF: Route(body)})
-    assert (
+    with pytest.raises(LexAPIToolError) as info:
         spec.lexapi_legislation_as_of("32099R0001", AS_OF)
-        == "LexAPI returned no answer for CELEX 32099R0001."
-    )
+    assert str(info.value) == "LexAPI error INVALID_RESPONSE: The answer could not be read."
 
 
 # ── errors ──────────────────────────────────────────────────────────────
@@ -665,7 +677,7 @@ def test_key_shapes_are_masked() -> None:
     assert str(LexAPIToolError.from_sdk(error)) == "LexAPI error X (HTTP 401): bad lex_***."
 
 
-# ── F1: an unreadable answer never leaks its body ──────────────────────
+# ── an unreadable answer never leaks its body ──────────────────────────
 
 LEAK = "UNRESOLVEDTEXTTOKEN"
 
@@ -799,8 +811,12 @@ async def test_function_tools_call_sync_and_async() -> None:
 def test_sync_with_only_an_async_client_is_a_value_error() -> None:
     aclient, _ = make_async_client({})
     spec = LexAPIToolSpec(async_client=aclient)
-    with pytest.raises(ValueError, match="only an async_client"):
+    with pytest.raises(ValueError) as info:
         spec.lexapi_search_legislation("q")
+    assert str(info.value) == (
+        "LexAPIToolSpec was given only an async_client; use the async methods or pass "
+        "client= as well"
+    )
 
 
 # ── report ──────────────────────────────────────────────────────────────
@@ -914,9 +930,11 @@ def test_context_manager_closes_and_marks_closed() -> None:
         sync = spec._clients._sync
         assert spec._clients._async is None
     assert sync is not None and sync._http.is_closed
-    with pytest.raises(RuntimeError) as info:
-        spec.lexapi_search_legislation("q")
-    assert str(info.value) == "LexAPIToolSpec is closed; create a new one."
+    for name, args in CALLS:
+        with pytest.raises(LexAPIToolError) as info:
+            getattr(spec, name)(**args)
+        assert str(info.value) == "LexAPIToolSpec is closed; create a new one."
+        assert_detached(info.value)
 
 
 async def test_async_context_manager_closes_both_owned_clients() -> None:
@@ -924,8 +942,11 @@ async def test_async_context_manager_closes_both_owned_clients() -> None:
         aclient = spec._clients.async_
         assert aclient is not None
     assert aclient._http.is_closed
-    with pytest.raises(RuntimeError, match="LexAPIToolSpec is closed"):
-        await spec.alexapi_read_document("32099R0001")
+    for name, args in CALLS:
+        with pytest.raises(
+            LexAPIToolError, match=r"^LexAPIToolSpec is closed; create a new one\.$"
+        ):
+            await getattr(spec, "a" + name)(**args)
 
 
 async def test_passed_clients_are_never_closed() -> None:
@@ -1045,3 +1066,225 @@ async def test_wrong_shape_200_search_sync_and_async(shape: str) -> None:
     with pytest.raises(LexAPIToolError) as ainfo:
         await aspec.alexapi_search_legislation("q")
     assert str(ainfo.value) == FIXED
+
+
+# ── malformed 200s on read and as-of: an error, never "no text" ────────
+
+NO_STATUS = "LexAPI error INVALID_RESPONSE: The answer could not be read."
+WITH_STATUS = "LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not be read."
+
+READ_BAD = {
+    "empty object": {},
+    "success only": {"success": True},
+    "document null": {"success": True, "document": None},
+    "document a string": {"success": True, "document": "x"},
+    "content a string": {"success": True, "document": {"celex": "32099R0001", "content": "x"}},
+    "articles not a list": {
+        "success": True,
+        "document": {"celex": "32099R0001", "content": {"articles": "x"}},
+    },
+    "article not an object": {
+        "success": True,
+        "document": {"celex": "32099R0001", "content": {"articles": ["x"]}},
+    },
+}
+AS_OF_BAD = {
+    "empty object": {},
+    "success only": {"success": True},
+    "document null": {"success": True, "document": None, "asOfResolved": False},
+    "document empty": {"success": True, "document": "", "asOfResolved": False},
+    "document an object": {"success": True, "document": {}, "asOfResolved": False},
+    "resolved missing": {"success": True, "document": "32099R0001"},
+    "resolved a string": {"success": True, "document": "32099R0001", "asOfResolved": "true"},
+}
+
+
+async def _all_paths(
+    spec: LexAPIToolSpec, aspec: LexAPIToolSpec, name: str, args: dict[str, Any]
+) -> list[str]:
+    out = []
+    with pytest.raises(LexAPIToolError) as info:
+        getattr(spec, name)(**args)
+    assert_detached(info.value)
+    out.append(str(info.value))
+    with pytest.raises(LexAPIToolError) as ainfo:
+        await getattr(aspec, "a" + name)(**args)
+    assert_detached(ainfo.value)
+    out.append(str(ainfo.value))
+    tool = tools_by_name(spec)[name]
+    for output in (call_tool(tool, args), await acall_tool(tool, args)):
+        assert output.is_error
+        out.append(output.content)
+    return out
+
+
+@pytest.mark.parametrize("shape", list(READ_BAD))
+async def test_malformed_read_answers_are_unreadable(shape: str) -> None:
+    routes = {DOC: Route(READ_BAD[shape])}
+    spec, _ = spec_for(routes)
+    aclient, _ = make_async_client(routes)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    with collect() as events:
+        texts = await _all_paths(spec, aspec, "lexapi_read_document", {"celex": "32099R0001"})
+    assert all(NO_STATUS in t for t in texts)
+    assert events == []
+
+
+@pytest.mark.parametrize("shape", list(AS_OF_BAD))
+async def test_malformed_as_of_answers_are_unreadable(shape: str) -> None:
+    routes = {ASOF: Route(AS_OF_BAD[shape])}
+    spec, _ = spec_for(routes)
+    aclient, _ = make_async_client(routes)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    args = {"celex": "32099R0001", "as_of": AS_OF}
+    with collect() as events:
+        texts = await _all_paths(spec, aspec, "lexapi_legislation_as_of", args)
+    assert all(NO_STATUS in t for t in texts)
+    assert events == []
+
+
+@pytest.mark.parametrize("shape", ["empty object", "success only", "document null"])
+async def test_malformed_search_answers_are_unreadable(shape: str) -> None:
+    routes = {LEG: Route(READ_BAD[shape])}
+    spec, _ = spec_for(routes)
+    aclient, _ = make_async_client(routes)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    texts = await _all_paths(spec, aspec, "lexapi_search_legislation", {"query": "q"})
+    assert all(WITH_STATUS in t for t in texts)
+
+
+def _document(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = load_fixture("document.read.json")
+    body["document"].update(overrides)
+    return body
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (_document(), "[1] "),
+        (_document(content=None), "LexAPI returned no text for CELEX 32099R0001."),
+        (
+            {"success": True, "document": {"celex": "32099R0001", "title": "Metadata only"}},
+            "LexAPI returned no text for CELEX 32099R0001.",
+        ),
+        (_document(content={"fullText": "Whole text of a decision."}), "[1] Whole text"),
+        (_document(content={"articles": []}), "LexAPI returned no text for CELEX 32099R0001."),
+        (
+            _document(
+                content={
+                    "fullText": "Article 1 ...",
+                    "articles": [{"id": "art_17", "number": "Article 17", "content": "Text."}],
+                    "recitals": [{"number": 1, "text": "Recital."}],
+                    "sections": [],
+                }
+            ),
+            "[1] Text.",
+        ),
+    ],
+)
+def test_well_formed_read_answers_are_accepted(body: dict[str, Any], expected: str) -> None:
+    spec, _ = spec_for({DOC: Route(body)})
+    assert spec.lexapi_read_document("32099R0001").startswith(expected)
+
+
+@pytest.mark.parametrize(
+    "fixture", ["as-of.resolved.json", "as-of.unresolved.json", "as-of.version-only.json"]
+)
+def test_every_as_of_outcome_is_accepted(fixture: str) -> None:
+    spec, _ = spec_for({ASOF: fixture_route(fixture)})
+    out = spec.lexapi_legislation_as_of("32099R0001", AS_OF, provision="art_17")
+    assert "\nSource: CELEX 32099R0001" in out
+
+
+def test_read_budget_counts_what_is_shown() -> None:
+    body = _document(
+        content={
+            "articles": [
+                {"id": "art_1", "content": " " * 50 + "a" * 150},
+                {"id": "art_2", "content": "b" * 50},
+            ]
+        }
+    )
+    spec, _ = spec_for({DOC: Route(body)}, max_chars=200)
+    with collect() as events:
+        out = spec.lexapi_read_document("32099R0001")
+    assert _shown_text_total(out) <= 200
+    assert "b" * 50 not in out
+    assert events[0].report.not_shown == 1
+
+
+# ── arguments checked before any request ───────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "message"),
+    [
+        ("lexapi_search_legislation", {"query": ""}, "Invalid argument: query must not be empty"),
+        ("lexapi_search_legislation", {"query": "  "}, "Invalid argument: query must not be empty"),
+        ("lexapi_read_document", {"celex": ""}, "Invalid argument: celex must not be empty"),
+        (
+            "lexapi_read_document",
+            {"celex": "32099R0001", "language": "EN"},
+            "Invalid argument: language must be a two-letter code such as en; got 'EN'",
+        ),
+        (
+            "lexapi_legislation_as_of",
+            {"celex": "", "as_of": AS_OF},
+            "Invalid argument: celex must not be empty",
+        ),
+        (
+            "lexapi_legislation_as_of",
+            {"celex": "32099R0001", "as_of": AS_OF, "language": "deu"},
+            "Invalid argument: language must be a two-letter code such as en; got 'deu'",
+        ),
+    ],
+)
+async def test_arguments_are_checked_before_any_request(
+    name: str, args: dict[str, Any], message: str
+) -> None:
+    spec, requests = spec_for(ROUTES)
+    aclient, arecorder = make_async_client(ROUTES)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    with pytest.raises(LexAPIToolError) as info:
+        getattr(spec, name)(**args)
+    assert str(info.value) == message
+    with pytest.raises(LexAPIToolError) as ainfo:
+        await getattr(aspec, "a" + name)(**args)
+    assert str(ainfo.value) == message
+    assert requests == [] and arecorder.requests == []
+
+
+def test_argument_descriptions_are_pinned() -> None:
+    spec, _ = spec_for({})
+    props = {
+        n: t.metadata.get_parameters_dict()["properties"] for n, t in tools_by_name(spec).items()
+    }
+    assert props["lexapi_search_legislation"]["query"]["description"] == (
+        "What to look for, in plain words."
+    )
+    assert props["lexapi_search_legislation"]["as_of"]["description"] == (
+        "Optional date, YYYY-MM-DD: return the text for that date. Leave it out for the "
+        "latest text."
+    )
+    assert props["lexapi_read_document"]["article"]["description"] == "art_17, 17 or 'Article 17'"
+    assert props["lexapi_legislation_as_of"]["provision"]["description"] == (
+        "Optional provision: a whole article (art_17, 17 or 'Article 17'), an annex (anx_III) "
+        "or recitals (rct_26 or rct_26-28). Without it only the version is named."
+    )
+
+
+@pytest.mark.parametrize("article", ["art_17", "17", "Article 17"])
+def test_article_forms_are_sent_as_given(article: str) -> None:
+    spec, requests = spec_for({DOC: fixture_route("document.read.json")})
+    spec.lexapi_read_document("32099R0001", article=article)
+    assert json.loads(requests[0].content)["articleId"] == article
+
+
+@pytest.mark.parametrize(
+    "provision", ["art_17", "17", "Article 17", "anx_III", "rct_26", "rct_26-28"]
+)
+def test_provision_forms_are_sent_as_given(provision: str) -> None:
+    spec, requests = spec_for({ASOF: fixture_route("as-of.resolved.json")})
+    spec.lexapi_legislation_as_of("32099R0001", AS_OF, provision=provision)
+    assert json.loads(requests[0].content)["provision"] == provision

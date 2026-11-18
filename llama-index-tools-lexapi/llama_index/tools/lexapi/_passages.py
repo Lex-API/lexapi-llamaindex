@@ -99,23 +99,24 @@ def dedupe(
 def cut_text(text: str, max_chars: int) -> tuple[str, bool]:
     """``text`` within ``max_chars`` characters, and whether it was cut.
 
-    Leading whitespace is dropped; a text that then fits is returned as it
-    is. Otherwise the cut is made at the last blank line at or before
-    ``max_chars``, else the last line break, else the last space, else at
-    ``max_chars``, never leaving nothing; a note saying so follows.
+    A text of at most ``max_chars`` characters is returned unchanged.
+    Otherwise leading whitespace is dropped and the text is cut at a
+    paragraph break when one falls in the second half of the limit,
+    otherwise at a line break or a space there, otherwise at the limit;
+    a note saying so follows.
     """
+    if len(text) <= max_chars:
+        return text, False
     body = text.lstrip()
     if len(body) <= max_chars:
         return body, False
-    cut = 0
+    cut = max_chars
     for separator in ("\n\n", "\n", " "):
-        position = body.rfind(separator, 0, max_chars + len(separator))
-        if position > 0:
-            cut = position
+        at = body.rfind(separator, 0, max_chars + len(separator))
+        if at > 0 and max_chars // 2 <= at <= max_chars:
+            cut = at
             break
-    if cut <= 0:
-        cut = max_chars
-    kept = body[:cut].rstrip()
+    kept = body[:cut].rstrip() or body[:max_chars]
     note = (
         f"[Text cut by {DISTRIBUTION}: {len(kept)} of {len(text)} characters shown. "
         "The full text is at the source.]"

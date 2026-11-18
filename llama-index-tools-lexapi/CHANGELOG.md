@@ -19,3 +19,8 @@
   masked.
 - `LexAPIToolEvent` carries each call's `LexAPICallReport`.
 - `with` / `async with`, `close()` / `aclose()`.
+- Read and as-of answers of the wrong shape raise the fixed unreadable-answer
+  error. Empty `query` / `celex` and a malformed `language` are refused
+  before any request.
+- The read budget counts the texts and notices as they are shown.
+- Cut rule as in the retrievers package.

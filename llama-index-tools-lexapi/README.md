@@ -13,22 +13,29 @@ Each tool has an async variant (`alexapi_...`) used by async agents.
 
 ## Install
 
+Version 0.1.0 is not on PyPI yet. Install it from this repository:
+
 ```bash
-pip install llama-index-tools-lexapi
+pip install "llama-index-tools-lexapi @ git+https://github.com/Lex-API/lexapi-llamaindex#subdirectory=llama-index-tools-lexapi"
 ```
+
+After the release it installs from PyPI with `pip install llama-index-tools-lexapi`.
 
 Python 3.11 or later. You need a LexAPI key (`lex_...`) from your LexAPI
 dashboard, in the environment as `LEXAPI_API_KEY` or passed as `api_key=`.
 
 ## Usage
 
+In an async context:
+
 ```python
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.tools.lexapi import LexAPIToolSpec
 
-tools = LexAPIToolSpec().to_tool_list()
-agent = FunctionAgent(tools=tools, llm=my_llm)
+spec = LexAPIToolSpec()
+agent = FunctionAgent(tools=spec.to_tool_list(), llm=my_llm)
 response = await agent.run("What did Article 17 of Regulation 2016/679 say on 2019-06-01?")
+await spec.aclose()
 ```
 
 The tools can be called directly as well:
@@ -59,15 +66,15 @@ raise `TypeError`.
   <date>.]`, then `Hint from LexAPI: ...` when the API sent a hint.
 - **Read:** numbered the same way. `max_chars` (at least 200, default
   20000, `None` for no bound) bounds the sum of the article texts and
-  notices shown; the numbering, `Source:` lines, the cut note and the list
+  notices shown, counted as they are shown; the numbering, `Source:` lines, the cut note and the list
   of articles not shown come on top. When the first article alone is over
   the budget its text is cut and ends with `[Text cut by
   llama-index-tools-lexapi: K of N characters shown. The full text is at
   the source.]`; the articles that do not fit are listed as `[Not shown: N
   more article(s) of CELEX <celex>: <refs>. Read one with the article
-  argument.]`. A cut is made at the last blank line within the budget, else
-  the last line break, else the last space, else at the budget; a cut can
-  fall early when the only break is near the start.
+  argument.]`. A text is cut at a paragraph break when one falls in the
+  second half of the limit, otherwise at a line break or a space there,
+  otherwise at the limit.
 - **As of a date:** the passage, followed by its `Source:` line.
 
 Texts, citations and notices are built by `lexapi.passages` in the LexAPI
@@ -118,14 +125,21 @@ to the model as the tool's error output.
 - An error the API answered: `LexAPI error <code> (HTTP <status>):
   <message>.`, then, when known, ` Credits reset at <time>.`,
   ` Billing: <url>` and ` Retry after <n> s.`
-- An answer that could not be read: `LexAPI error INVALID_RESPONSE (HTTP
-  <status>): The answer could not be read.` The SDK's error is not attached,
-  since its message can quote the response.
+- An answer that could not be read, or a read or as-of answer of the wrong
+  shape: `LexAPI error INVALID_RESPONSE (HTTP <status>): The answer could
+  not be read.` (without `(HTTP <status>)` when there is none).
+- An invalid argument, before any request: `Invalid argument: ...` (an
+  empty `query` or `celex`, a `language` that is not a two-letter code, a
+  date that is not `YYYY-MM-DD`).
+- After `close()`: `LexAPIToolSpec is closed; create a new one.`
+- SDK exceptions are not attached; an API error's message is the API's own
+  text.
 - Anything shaped like an API key is masked as `lex_***`.
 
-An error is never turned into an empty answer. An answer LexAPI's client cannot read raises an error; it is never read as an empty result. An answer says nothing
-matched when the search had no hits, when `unresolved="drop"` left every hit
-out, or when the API sent hits without a CELEX number.
+An error is never turned into an empty answer. An answer LexAPI's client
+cannot read raises an error; it is never read as an empty result. An answer
+says nothing matched when the search had no hits, when `unresolved="drop"`
+left every hit out, or when the API sent hits without a CELEX number.
 
 ## What this package does not do
 

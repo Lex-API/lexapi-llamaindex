@@ -32,4 +32,4 @@ def test_readme_examples_run(monkeypatch: pytest.MonkeyPatch) -> None:
         README, routes, client_module, monkeypatch, extra={"my_llm": scripted_llm()}
     )
     assert "Source: CELEX 32099R0001, art_17" in printed
-    assert len(namespace["tools"]) == 3
+    assert namespace["spec"]._clients.closed

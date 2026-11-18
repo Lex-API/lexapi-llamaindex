@@ -25,8 +25,13 @@ Each package is built and tested on its own:
 
 ```bash
 cd llama-index-retrievers-lexapi   # or llama-index-tools-lexapi
-uv venv && uv pip install -e . --group dev
-ruff check . && ruff format --check . && mypy && pytest
+uv venv
+. .venv/bin/activate
+uv pip install -e . --group dev
+ruff check . ../testing ../scripts
+ruff format --check . ../testing ../scripts
+mypy
+pytest
 ```
 
 The tests are offline: clients answer from `httpx.MockTransport` with the

@@ -17,3 +17,9 @@
 - `as_of`, `date_from` and `date_to` are checked before any request.
 - `with` / `async with`, `close()` / `aclose()`; a closed retriever refuses
   calls.
+- `ClientClosedError` for use after `close()` / `aclose()`.
+- LLM view hides the duplicate citation keys; the model reads the citation
+  once, in the `Source:` line.
+- Cut rule: a text within the limit is unchanged; a longer one is cut at a
+  paragraph break in the second half of the limit, else a line break or a
+  space there, else at the limit.

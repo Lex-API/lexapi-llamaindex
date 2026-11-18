@@ -10,9 +10,13 @@ LlamaIndex retrievers for EU legislation and CJEU case law from
 
 ## Install
 
+Version 0.1.0 is not on PyPI yet. Install it from this repository:
+
 ```bash
-pip install llama-index-retrievers-lexapi
+pip install "llama-index-retrievers-lexapi @ git+https://github.com/Lex-API/lexapi-llamaindex#subdirectory=llama-index-retrievers-lexapi"
 ```
+
+After the release it installs from PyPI with `pip install llama-index-retrievers-lexapi`.
 
 Python 3.11 or later. You need a LexAPI key (`lex_...`) from your LexAPI
 dashboard, in the environment as `LEXAPI_API_KEY` or passed as `api_key=`.
@@ -39,7 +43,8 @@ engine = RetrieverQueryEngine.from_args(retriever, llm=my_llm)
 print(engine.query("When must a controller erase personal data?"))
 ```
 
-To use your own SDK clients (timeouts, retries, base URL), pass them in:
+To use your own SDK clients (timeouts, retries, base URL), pass them in. In
+an async context:
 
 ```python
 from lexapi import AsyncLexAPI, LexAPI
@@ -81,10 +86,15 @@ Metadata keys (present when known): `kind`, `celex`, `cite_celex`,
 
 - **Embedding:** no metadata key is embedded
   (`excluded_embed_metadata_keys` lists them all).
-- **LLM view:** `eli`, `id`, `kind`, `score` and `url` are hidden from the
-  LLM (`EXCLUDED_LLM_METADATA_KEYS`; the URL is already in `citation`).
-  Every other key, including `citation`, `cite_celex`, `consolidated`,
-  `as_of`, `as_of_resolved`, `as_of_reason` and `text_status`, is shown.
+- **LLM view:** the model reads each fact once. Hidden
+  (`EXCLUDED_LLM_METADATA_KEYS`): `base_celex`, `celex`, `citation`, `eli`,
+  `id`, `kind`, `score`, `text_withheld`, `url`, `version_celex`,
+  `version_date`, `version_kind`, `version_valid_until`. The citation is
+  read once, in the node text's `Source:` line; with
+  `include_citation_in_text=False` the `citation` key is shown instead.
+  `cite_celex`, `consolidated`, `consolidated_note`, `as_of`,
+  `as_of_resolved`, `as_of_reason`, `text_status` and the other keys stay
+  visible.
 
 ## The text for a date
 
@@ -117,11 +127,11 @@ It never asks for more hits to make up the number.
 
 `LexAPICaseLawRetriever` always asks for the full text of each decision
 (`include_text=True`). The text of a node is the whole decision, which can
-be long; `max_chars=N` (at least 200) cuts it at the last blank line within
-`N` characters, else the last line break, else the last space, else at `N`,
-and marks the cut with `[Text cut by llama-index-retrievers-lexapi: K of M
-characters shown. The full text is at the source.]` before the `Source:`
-line. A cut can fall early when the only break is near the start. The
+be long. With `max_chars=N` (at least 200) a longer text is cut at a
+paragraph break when one falls in the second half of the limit, otherwise
+at a line break or a space there, otherwise at the limit, and the cut is
+marked with `[Text cut by llama-index-retrievers-lexapi: K of M characters
+shown. The full text is at the source.]` before the `Source:` line. The
 default is the whole decision. The search snippet and
 the machine-written summary are never used as text. Filters: `court`,
 `date_from`, `date_to`.
@@ -158,15 +168,17 @@ descending.
 
 ## Errors
 
-An error is never turned into an empty list. An answer LexAPI's client cannot read raises an error; it is never read as an empty result. A result can be empty when the
-search had no hits, when `celex` filtered every hit out, when
+An error is never turned into an empty list. An answer LexAPI's client
+cannot read raises an error; it is never read as an empty result. A result
+can be empty when the search had no hits, when `celex` filtered every hit out, when
 `unresolved="drop"` left every hit out, when `emit_withheld=False` left out
 withheld hits, or when the API sent hits without a CELEX number (counted in
-`report.uncitable`). The SDK's exceptions propagate unchanged, for example `lexapi.CreditsExhaustedError` (402), `lexapi.PaymentPastDueError`
-(403), `lexapi.RateLimitedError` (429), `lexapi.AuthenticationError`
-(401), and `lexapi.InvalidResponseError` for an answer that could not be
-read. The message of that last one can quote the response body, so do not
-pass it to a model as it is.
+`report.uncitable`). SDK exceptions are raised unchanged; an API error's
+message is the API's own text. For example: `lexapi.CreditsExhaustedError`
+(402), `lexapi.PaymentPastDueError` (403), `lexapi.RateLimitedError` (429),
+`lexapi.AuthenticationError` (401), and `lexapi.InvalidResponseError` for
+an answer that could not be read. Using a retriever after `close()` raises
+`ClientClosedError`.
 
 ## What this package does not do
 

@@ -30,6 +30,7 @@ from llama_index.core.schema import MetadataMode, NodeWithScore, TextNode
 
 from llama_index.retrievers.lexapi import (
     EXCLUDED_LLM_METADATA_KEYS,
+    ClientClosedError,
     LexAPICallReport,
     LexAPICaseLawRetriever,
     LexAPILegislationRetriever,
@@ -43,8 +44,8 @@ CASE = "/search/semantic"
 AS_OF = "2099-06-01"
 
 GUARDRAIL_KEYS = (
-    "citation",
     "cite_celex",
+    "consolidated_note",
     "consolidated",
     "as_of",
     "as_of_resolved",
@@ -313,14 +314,51 @@ def test_ids_are_stable_and_differ_by_date() -> None:
 # ── what the LLM and the embedder see ──────────────────────────────────
 
 
+HIDDEN = [
+    "base_celex",
+    "celex",
+    "citation",
+    "eli",
+    "id",
+    "kind",
+    "score",
+    "text_withheld",
+    "url",
+    "version_celex",
+    "version_date",
+    "version_kind",
+    "version_valid_until",
+]
+
+
 def test_excluded_metadata_keys_are_pinned() -> None:
-    assert EXCLUDED_LLM_METADATA_KEYS == ("eli", "id", "kind", "score", "url")
+    assert list(EXCLUDED_LLM_METADATA_KEYS) == HIDDEN
     retriever, _ = leg_retriever("legislation.mixed.json", as_of=AS_OF)
     for item in retriever.retrieve("q"):
         node = text_node(item)
         assert node.excluded_embed_metadata_keys == sorted(node.metadata)
-        assert node.excluded_llm_metadata_keys == ["eli", "id", "kind", "score", "url"]
+        assert node.excluded_llm_metadata_keys == HIDDEN
         assert not set(GUARDRAIL_KEYS) & set(node.excluded_llm_metadata_keys)
+
+
+def test_citation_stays_visible_without_the_source_line() -> None:
+    retriever, _ = leg_retriever(
+        "legislation.mixed.json", as_of=AS_OF, include_citation_in_text=False
+    )
+    for item in retriever.retrieve("q"):
+        node = text_node(item)
+        assert node.excluded_llm_metadata_keys == [k for k in HIDDEN if k != "citation"]
+        llm = node.get_content(metadata_mode=MetadataMode.LLM)
+        assert f"citation: {node.metadata['citation']}" in llm
+
+
+def test_llm_view_reads_the_citation_once() -> None:
+    retriever, _ = leg_retriever("legislation.mixed.json", as_of=AS_OF)
+    for item in retriever.retrieve("q"):
+        node = text_node(item)
+        llm = node.get_content(metadata_mode=MetadataMode.LLM)
+        assert llm.count(str(node.metadata["citation"])) == 1
+        assert "\nSource: " in llm
 
 
 def test_llm_view_shows_the_guardrail_keys() -> None:
@@ -417,7 +455,11 @@ async def test_async_with_only_a_sync_client_runs_in_a_thread() -> None:
 def test_sync_with_only_an_async_client_says_so() -> None:
     aclient, _ = make_async_client({})
     retriever = LexAPILegislationRetriever(async_client=aclient)
-    with pytest.raises(ValueError, match="only an async_client"):
+    with pytest.raises(
+        ValueError,
+        match=r"^LexAPILegislationRetriever was given only an async_client; use the async "
+        r"methods or pass client= as well$",
+    ):
         retriever.retrieve("q")
 
 
@@ -701,6 +743,9 @@ def _passage(text: str | None) -> Any:
         ("a" * 250, "a" * 200),
         ("\n\n   " + "a" * 150 + " " + "b" * 100, "a" * 150),
         ("\n\n" + "a" * 250, "a" * 200),
+        ("a" * 50 + "\n\n" + "b" * 300, "a" * 50 + "\n\n" + "b" * 148),
+        ("a" * 99 + " " + "b" * 300, "a" * 99 + " " + "b" * 100),
+        ("a" * 100 + " " + "b" * 300, "a" * 100),
     ],
 )
 def test_truncation_rules(text: str, kept: str) -> None:
@@ -718,14 +763,20 @@ def test_cut_rule_example() -> None:
     )
 
 
-def test_cut_rule_strips_and_returns_a_fitting_text() -> None:
-    assert cut_text("  \n short", 10) == ("short", False)
+def test_cut_rule_returns_a_fitting_text_unchanged() -> None:
+    assert cut_text("  \n short", 10) == ("  \n short", False)
 
 
-def test_cut_rule_falls_early_when_the_only_break_is_near_the_start() -> None:
-    text = "Heading\n\n" + "x" * 500
-    kept = cut_text(text, 200)[0].split("\n")[0]
-    assert kept == "Heading"
+def test_cut_rule_ignores_a_break_in_the_first_half() -> None:
+    words = " ".join(f"word{n}" for n in range(2000))
+    text = "Heading\n\n" + words
+    out, cut = cut_text(text, 4000)
+    kept = out.split("\n[Text cut by ", 1)[0]
+    assert cut
+    assert kept.startswith("Heading\n\nword0 ")
+    assert 3990 <= len(kept) <= 4000
+    assert text.startswith(kept)
+    assert text[len(kept)] == " "
 
 
 def test_truncation_never_shows_nothing() -> None:
@@ -890,7 +941,7 @@ def test_context_managers_close_and_mark_closed() -> None:
         sync_http = retriever._clients._sync._http  # type: ignore[union-attr]
     assert sync_http.is_closed
     with pytest.raises(
-        RuntimeError, match=r"^LexAPILegislationRetriever is closed; create a new one\.$"
+        ClientClosedError, match=r"^LexAPILegislationRetriever is closed; create a new one\.$"
     ):
         retriever.retrieve("q")
 

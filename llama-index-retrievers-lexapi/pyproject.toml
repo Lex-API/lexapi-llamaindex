@@ -14,7 +14,7 @@ authors = [{ name = "Arieta Labs Ltd", email = "support@lex-api.com" }]
 maintainers = [{ name = "Arieta Labs Ltd", email = "support@lex-api.com" }]
 keywords = ["llama-index", "lexapi", "eu-law", "eur-lex", "cjeu", "rag", "retriever"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -54,6 +54,9 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["llama_index/", "README.md", "CHANGELOG.md", "LICENSE"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"../SECURITY.md" = "SECURITY.md"
 
 [tool.hatch.build.hooks.custom]
 # hatch_build.py: keeps the repository's .gitignore out of the sdist.
