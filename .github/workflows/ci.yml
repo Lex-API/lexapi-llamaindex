@@ -64,5 +64,6 @@ jobs:
         run: pytest -q
       - name: Build and twine check
         run: |
-          python -m build --installer uv
+          rm -rf dist
+          uv build --out-dir dist
           twine check --strict dist/*
