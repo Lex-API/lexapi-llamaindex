@@ -24,6 +24,16 @@ from lexapi_offline import LOOPBACK, OFFLINE_KEY, Recorder, Route
 from llama_index.core.llms import MockLLM
 
 _BLOCK = re.compile(r"```python\n(.*?)```", re.DOTALL)
+#: First line of an example that needs llama-index-core 0.14 or later; it
+#: is skipped on older versions.
+CORE_014_MARKER = "# llama-index-core 0.14 and later"
+
+
+def core_at_least(major: int, minor: int) -> bool:
+    from llama_index.core import __version__
+
+    parts = re.findall(r"\d+", __version__)[:2]
+    return (int(parts[0]), int(parts[1])) >= (major, minor)
 
 
 def python_blocks(readme: pathlib.Path) -> list[str]:
@@ -81,6 +91,8 @@ def run_readme(
     assert blocks, f"no python blocks in {readme}"
     with contextlib.redirect_stdout(out):
         for block in blocks:
+            if block.startswith(CORE_014_MARKER) and not core_at_least(0, 14):
+                continue
             code = compile(block, str(readme), "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
             result = eval(code, namespace)
             if asyncio.iscoroutine(result):

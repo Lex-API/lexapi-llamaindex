@@ -227,3 +227,108 @@ def legislation_body(hits: list[dict[str, Any]], as_of: str | None) -> dict[str,
     if as_of is not None:
         body["asOf"] = as_of
     return body
+
+
+# ── a scripted function-calling LLM (agent examples) ───────────────────
+
+
+def scripted_llm(tool_name: str, tool_kwargs: dict[str, Any]) -> Any:
+    """A function-calling mock LLM that, in each agent run, first calls
+    ``tool_name`` with ``tool_kwargs`` and then answers "Done." once a tool
+    result is in the conversation. Works on every supported
+    llama-index-core (0.13 has no ``MockFunctionCallingLLM``)."""
+    from collections.abc import AsyncGenerator, Generator, Sequence
+
+    from llama_index.core.base.llms.types import (
+        ChatMessage,
+        ChatResponse,
+        CompletionResponse,
+        LLMMetadata,
+        MessageRole,
+    )
+    from llama_index.core.llms.function_calling import FunctionCallingLLM
+    from llama_index.core.llms.llm import ToolSelection
+
+    class ScriptedFunctionCallingLLM(FunctionCallingLLM):
+        @classmethod
+        def class_name(cls) -> str:
+            return "ScriptedFunctionCallingLLM"
+
+        @property
+        def metadata(self) -> LLMMetadata:
+            return LLMMetadata(is_function_calling_model=True, is_chat_model=True)
+
+        def _reply(self, messages: Sequence[ChatMessage]) -> ChatMessage:
+            if any(m.role == MessageRole.TOOL for m in messages):
+                return ChatMessage(role=MessageRole.ASSISTANT, content="Done.")
+            call = {"id": "call-1", "name": tool_name, "kwargs": dict(tool_kwargs)}
+            return ChatMessage(
+                role=MessageRole.ASSISTANT, content="", additional_kwargs={"tool_calls": [call]}
+            )
+
+        def _prepare_chat_with_tools(
+            self,
+            tools: Sequence[Any],
+            user_msg: str | ChatMessage | None = None,
+            chat_history: list[ChatMessage] | None = None,
+            verbose: bool = False,
+            allow_parallel_tool_calls: bool = False,
+            tool_required: bool = False,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            messages = list(chat_history or [])
+            if isinstance(user_msg, str):
+                messages.append(ChatMessage(role=MessageRole.USER, content=user_msg))
+            elif user_msg is not None:
+                messages.append(user_msg)
+            return {"messages": messages}
+
+        def get_tool_calls_from_response(
+            self, response: ChatResponse, error_on_no_tool_call: bool = True, **kwargs: Any
+        ) -> list[ToolSelection]:
+            calls = response.message.additional_kwargs.get("tool_calls") or []
+            return [
+                ToolSelection(tool_id=c["id"], tool_name=c["name"], tool_kwargs=c["kwargs"])
+                for c in calls
+            ]
+
+        def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
+            return ChatResponse(message=self._reply(messages))
+
+        async def achat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
+            return self.chat(messages)
+
+        def stream_chat(
+            self, messages: Sequence[ChatMessage], **kwargs: Any
+        ) -> Generator[ChatResponse, None, None]:
+            message = self._reply(messages)
+            yield ChatResponse(message=message, delta=message.content or "")
+
+        async def astream_chat(
+            self, messages: Sequence[ChatMessage], **kwargs: Any
+        ) -> AsyncGenerator[ChatResponse, None]:
+            message = self._reply(messages)
+
+            async def stream() -> AsyncGenerator[ChatResponse, None]:
+                yield ChatResponse(message=message, delta=message.content or "")
+
+            return stream()
+
+        def complete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            return CompletionResponse(text="Done.")
+
+        async def acomplete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            return CompletionResponse(text="Done.")
+
+        def stream_complete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            yield CompletionResponse(text="Done.", delta="Done.")
+
+        async def astream_complete(
+            self, prompt: str, formatted: bool = False, **kwargs: Any
+        ) -> Any:
+            async def stream() -> AsyncGenerator[CompletionResponse, None]:
+                yield CompletionResponse(text="Done.", delta="Done.")
+
+            return stream()
+
+    return ScriptedFunctionCallingLLM()

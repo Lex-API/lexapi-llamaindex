@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "error": "Monthly quota exceeded",
+  "code": "QUOTA_EXHAUSTED",
+  "usage": {
+    "resetsAt": "2099-07-01T00:00:00.000Z"
+  }
+}
