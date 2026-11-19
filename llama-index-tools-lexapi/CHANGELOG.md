@@ -20,7 +20,7 @@
   value that is not a string (`... must be a string`), a malformed
   `language` and dates.
 - Errors raise `LexAPIToolError` with the API's code and message, the credit
-  reset time, billing page or retry wait when known; key-shaped text is
+  reset time, billing page or retry wait when they apply; key-shaped text is
   masked. An unreadable answer gets a fixed text and the SDK error is not
   attached: `LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not
   be read.` for answers the pinned `lexapi-client` refuses (wrong shape, or
@@ -28,15 +28,11 @@
   the status for the tools' own checks (a read answer must carry a
   non-empty `celex` string and a string `content.fullText` when present; an
   as-of `document` must not be blank).
-- An exhausted quota (429) says that retrying will not help before the
-  quota resets, with the reset time when known, and gives no retry wait. A
-  failed payment (`PAYMENT_PAST_DUE`) gives its code, message and billing
-  page, never a retry wait, and is not shown as a plan gate.
-- `LexAPIToolError` carries the billing and reset information of the SDK
-  error as attributes: `quota_exhausted`, `resets_at`, the credit figures
-  (`operation`, `weight`, `available`, `included`, `topup`, `used`),
-  `upgrade_url`, `billing_url` and `access_ended_at`, besides `code`,
-  `status` and `retry_after`.
+- Error texts name an exhausted quota and a failed payment's access end and billing page, and
+  show a retry wait only when a retry can help; relayed strings are kept to one bounded line.
+- `LexAPIToolError` exposes the billing and reset details as attributes (`quota_exhausted`,
+  `resets_at`, credit figures, `upgrade_url`, `billing_url`, `access_ended_at`); `retry_after`
+  is `None` on an exhausted quota and a failed payment. It can be pickled and copied.
 - `LexAPIToolEvent` carries each call's `LexAPICallReport`.
 - `with` / `async with`, `close()` / `aclose()`.
 - Depends on `lexapi-client` from its repository at commit `e48dfda` until

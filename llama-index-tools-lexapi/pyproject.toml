@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11,<4.0"
 authors = [{ name = "Arieta Labs Ltd", email = "support@lex-api.com" }]
 maintainers = [{ name = "Arieta Labs Ltd", email = "support@lex-api.com" }]
-keywords = ["llama-index", "lexapi", "eu-law", "eur-lex", "cjeu", "rag", "tools"]
+keywords = ["llama-index", "lexapi", "eu-law", "eur-lex", "rag", "tools"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

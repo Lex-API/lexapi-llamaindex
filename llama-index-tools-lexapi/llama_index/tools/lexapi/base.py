@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 import datetime as dt
 import inspect
+import math
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any, NoReturn, Self, SupportsIndex, TypeVar, get_args
@@ -29,6 +30,7 @@ from lexapi import (
     InvalidResponseError,
     LexAPI,
     LexAPIError,
+    NationalAllowanceExhaustedError,
     PaymentPastDueError,
     RateLimitedError,
     TierForbiddenError,
@@ -67,27 +69,100 @@ def _mask(text: str) -> str:
     return _KEY_PATTERN.sub("lex_***", text)
 
 
+# Control characters (C0, DEL, C1) and the Unicode line and paragraph
+# separators: a relayed server string is shown on one line.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+#: Longest relayed time or URL shown in the error text, in characters.
+VALUE_CAP = 200
+#: Longest API message shown in the error text, in characters.
+MESSAGE_CAP = 1000
+# The cloud's statuses for a request that never reached LexAPI.
+_NOT_REACHED = frozenset({521, 522, 523})
+
+
+def _clean(value: object, cap: int = VALUE_CAP) -> str | None:
+    """A relayed server string for the error text: control characters and
+    line breaks become spaces, runs of whitespace one space, and the text is
+    cut to ``cap`` characters followed by ``…``. ``None`` when nothing is
+    left."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(_CONTROL.sub(" ", value).split())
+    if not text:
+        return None
+    return text[:cap].rstrip() + "…" if len(text) > cap else text
+
+
+def _seconds(value: object) -> str | None:
+    """A wait as a plain decimal number of seconds (``30``, ``2.5``; at most
+    six decimals); ``None`` for no usable wait (not a finite number above 0,
+    or one that rounds to 0)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    if number.is_integer():
+        return str(int(number))
+    text = f"{number:.6f}".rstrip("0").rstrip(".")
+    return text if text != "0" else None
+
+
+def _sdk_retries(error: LexAPIError) -> bool:
+    """Whether the SDK retries an error of this kind on the tools' requests
+    (read-only, billed POSTs) under its default retry policy, judged from
+    what the error carries: a 429, or the cloud's 521-523 (the request never
+    reached LexAPI); never a failed payment, an exhausted quota, or a credit
+    or allowance error."""
+    if error.status not in (429, *_NOT_REACHED):
+        return False
+    if error.code in ("PAYMENT_PAST_DUE", "QUOTA_EXHAUSTED"):
+        return False
+    if isinstance(error, RateLimitedError) and error.quota_exhausted:
+        return False
+    return not isinstance(
+        error, (PaymentPastDueError, CreditsExhaustedError, NationalAllowanceExhaustedError)
+    )
+
+
+def _restore_tool_error(
+    cls: type["LexAPIToolError"], args: tuple[Any, ...], state: dict[str, Any]
+) -> "LexAPIToolError":
+    error = cls.__new__(cls)
+    error.args = args
+    error.__dict__.update(state)
+    return error
+
+
 class LexAPIToolError(Exception):
     """A tool call failed.
 
     For an error the API answered, the message is ``LexAPI error <code>
-    (HTTP <status>): <message>``, followed when known by ``Credits reset at
-    <time>.``, ``Billing: <url>`` and ``Retry after <n> s.``. An exhausted
-    quota adds ``This is a used-up quota, not a rate limit: retrying will
-    not help before it resets[ at <time>].`` and never a retry wait; a
-    failed payment never gets a retry wait either. An answer that could not
-    be read, or one of the wrong shape, gives the fixed ``LexAPI error
-    INVALID_RESPONSE (HTTP <status>): The answer could not be read.``
-    (without the status when there is none). An invalid argument gives
-    ``Invalid argument: ...`` before any request is sent. LlamaIndex agents
-    pass the message to the model as the tool's error output.
+    (HTTP <status>): <message>.`` followed, each only when it applies and in
+    this order, by ``Credits reset at <time>.``, ``This is an exhausted
+    quota, not a rate limit.`` and ``Quota resets at <time>.``, ``Access
+    ended at <time>.``, ``Billing: <url>`` (when the message does not already
+    contain it) and ``Retry after <n> s.`` (only when the SDK retries such an
+    error: a plain rate limit, or a request that never reached LexAPI).
+    Relayed strings are put on one line and cut (times and URLs at 200
+    characters, the message at 1,000). An answer that could not be read, or
+    one of the wrong shape, gives the fixed ``LexAPI error INVALID_RESPONSE
+    (HTTP <status>): The answer could not be read.`` (without the status
+    when there is none). An invalid argument gives ``Invalid argument: ...``
+    before any request is sent. LlamaIndex agents pass the message to the
+    model as the tool's error output.
 
     The billing and reset information the SDK error carries is also on
     attributes, so an application can show it without reading the text:
     ``quota_exhausted``, ``resets_at``, ``operation``, ``weight``,
     ``available``, ``included``, ``topup``, ``used``, ``upgrade_url``,
     ``billing_url`` and ``access_ended_at`` (``False`` / ``None`` when the
-    error does not carry them).
+    error does not carry them). ``retry_after`` is the wait the server
+    named, also when a retry cannot help; ``None`` on an exhausted quota and
+    a failed payment.
 
     SDK exceptions are not attached (neither ``__cause__`` nor
     ``__context__``); an API error's message is the API's own text.
@@ -115,10 +190,10 @@ class LexAPIToolError(Exception):
         super().__init__(message)
         self.code = code
         self.status = status
-        #: Seconds the server asked to wait before a retry; never set on an
-        #: exhausted quota or a failed payment.
+        #: Seconds the server named before a retry; ``None`` on an exhausted
+        #: quota and a failed payment.
         self.retry_after = retry_after
-        #: True on a 429 that reports an exhausted quota, not a rate limit.
+        #: True on an exhausted quota, not a rate limit.
         self.quota_exhausted = quota_exhausted
         #: When the credit pool (402) or the quota (429) refills, ISO-8601.
         self.resets_at = resets_at
@@ -137,6 +212,10 @@ class LexAPIToolError(Exception):
         self.billing_url = billing_url
         self.access_ended_at = access_ended_at
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # The default would call ``cls(*args)`` without the keyword arguments.
+        return (_restore_tool_error, (type(self), self.args, self.__dict__.copy()))
+
     @classmethod
     def from_sdk(cls, error: LexAPIError) -> "LexAPIToolError":
         status = error.status
@@ -147,15 +226,18 @@ class LexAPIToolError(Exception):
                 code="INVALID_RESPONSE",
                 status=status,
             )
-        api_message = error.message.strip()
+        api_message = _clean(error.message, MESSAGE_CAP)
+        api_message = api_message.rstrip(": ") if api_message else ""
         if api_message and api_message[-1] not in ".!?":
             api_message += "."
-        message = f"LexAPI error {error.code}{http}: {api_message}"
+        code = _clean(error.code) or LexAPIError.default_code
+        message = f"LexAPI error {code}{http}" + (f": {api_message}" if api_message else ".")
         retry_after = error.retry_after
         fields: dict[str, Any] = {}
         if isinstance(error, CreditsExhaustedError):
+            resets_at = _clean(error.resets_at)
             fields.update(
-                resets_at=error.resets_at,
+                resets_at=error.resets_at if resets_at else None,
                 operation=error.operation,
                 weight=error.weight,
                 available=error.available,
@@ -163,27 +245,37 @@ class LexAPIToolError(Exception):
                 topup=error.topup,
                 used=error.used,
             )
-            if error.resets_at:
-                message += f" Credits reset at {error.resets_at}."
+            if resets_at:
+                message += f" Credits reset at {resets_at}."
         elif isinstance(error, RateLimitedError) and error.quota_exhausted:
             # A quota does not refill within a retry wait.
             retry_after = None
-            fields.update(quota_exhausted=True, resets_at=error.resets_at)
-            when = f" at {error.resets_at}" if error.resets_at else ""
-            message += (
-                " This is a used-up quota, not a rate limit: retrying will not help before "
-                f"it resets{when}."
-            )
+            resets_at = _clean(error.resets_at)
+            fields.update(quota_exhausted=True, resets_at=error.resets_at if resets_at else None)
+            message += " This is an exhausted quota, not a rate limit."
+            if resets_at:
+                message += f" Quota resets at {resets_at}."
         elif isinstance(error, PaymentPastDueError):
             # Never retried by the SDK, whatever wait the answer named.
             retry_after = None
-            fields.update(billing_url=error.billing_url, access_ended_at=error.access_ended_at)
-            if error.billing_url:
-                message += f" Billing: {error.billing_url}"
+            access_ended_at = _clean(error.access_ended_at)
+            billing_url = _clean(error.billing_url)
+            fields.update(
+                access_ended_at=error.access_ended_at if access_ended_at else None,
+                billing_url=error.billing_url if billing_url else None,
+            )
+            if access_ended_at:
+                message += f" Access ended at {access_ended_at}."
+            # Compared whole: the message and the link as sent, on one line.
+            full_url = _clean(error.billing_url, len(error.billing_url or ""))
+            full_message = _clean(error.message, len(error.message or "")) or ""
+            if billing_url and full_url and full_url not in full_message:
+                message += f" Billing: {billing_url}"
         elif isinstance(error, TierForbiddenError):
-            fields.update(upgrade_url=error.upgrade_url)
-        if retry_after is not None:
-            message += f" Retry after {retry_after:g} s."
+            fields.update(upgrade_url=error.upgrade_url if _clean(error.upgrade_url) else None)
+        wait = _seconds(retry_after) if _sdk_retries(error) else None
+        if wait is not None:
+            message += f" Retry after {wait} s."
         return cls(
             _mask(message), code=error.code, status=status, retry_after=retry_after, **fields
         )

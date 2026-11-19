@@ -193,6 +193,12 @@ message is the API's own text. For example: `lexapi.CreditsExhaustedError`
 an answer that could not be read. Using a retriever after `close()` raises
 `ClientClosedError`.
 
+`lexapi.PaymentPastDueError` derives from `lexapi.TierForbiddenError`:
+catch it first to tell a failed payment from a plan gate.
+`RateLimitedError.quota_exhausted` (with `resets_at`, when the quota
+refills) tells an exhausted quota from a per-minute rate limit; the SDK
+retries a rate limit, never a quota.
+
 ## What this package does not do
 
 - LexAPI provides source texts and citations. It does not assess whether

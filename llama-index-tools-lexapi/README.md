@@ -122,19 +122,39 @@ passages as notices), `duplicates`, `truncated` (texts that were cut),
 ## Errors
 
 A failed call raises `LexAPIToolError`. LlamaIndex agents hand its message
-to the model as the tool's error output.
+to the model as the tool's error output. The model reads this text and may
+repeat it to the person it is talking to, including a failed payment and the
+billing link; an application that handles billing itself should check
+`is_error` and use the attributes (below).
 
-- An error the API answered: `LexAPI error <code> (HTTP <status>):
-  <message>.`, then, when known, ` Credits reset at <time>.`,
-  ` Billing: <url>` and ` Retry after <n> s.`
-- An exhausted quota (a 429 the SDK flags as `quota_exhausted`, code
-  `QUOTA_EXHAUSTED`, or `RATE_LIMITED` from APIs before 2.4.0) adds
-  ` This is a used-up quota, not a rate limit: retrying will not help before
-  it resets at <time>.` (`before it resets.` when no time is known), and
-  never a retry wait.
-- A failed payment (`PAYMENT_PAST_DUE`) gives the API's code and message
-  and ` Billing: <url>` when known, never a retry wait. It is not shown as
-  a plan gate.
+An error the API answered reads `LexAPI error <code> (HTTP <status>):
+<message>.` (a period is added unless the message ends in `.`, `!` or `?`),
+followed, each only when it applies and in this order, by:
+
+1. ` Credits reset at <time>.`: credits exhausted, when the reset time is
+   known.
+2. ` This is an exhausted quota, not a rate limit.`: an exhausted quota
+   (code `QUOTA_EXHAUSTED`, or a 429 of the legacy quota shape), then
+   ` Quota resets at <time>.` when the reset time is known.
+3. ` Access ended at <time>.`: a failed payment (`PAYMENT_PAST_DUE`), when
+   known.
+4. ` Billing: <url>`: a failed payment, when known and not already in the
+   message.
+5. ` Retry after <n> s.`: only for an error the LexAPI client retries
+   under its default retry policy (a rate-limit 429, or a 521, 522 or 523:
+   the request never reached LexAPI), when the server named a wait. Never
+   on an exhausted quota, a failed payment, exhausted credits or national
+   allowance, any other 4xx or any other 5xx.
+
+A failed payment is not shown as a plan gate. Strings the server sent are
+put on one line (control characters and line breaks become spaces, runs of
+spaces one space) and cut to 200 characters (the code, times, URLs) or
+1,000 (the message), followed by `…`; one that is empty after that counts
+as not sent. A message ending in `:` ends in `.` instead; a blank one
+leaves `LexAPI error <code> (HTTP <status>).`
+
+Other errors:
+
 - An answer that could not be read, or a read or as-of answer of the wrong
   shape: `LexAPI error INVALID_RESPONSE (HTTP <status>): The answer could
   not be read.` (without `(HTTP <status>)` when there is none).
@@ -147,24 +167,100 @@ to the model as the tool's error output.
   text.
 - Anything shaped like an API key is masked as `lex_***`.
 
-`LexAPIToolError` also carries what it says as attributes, so an
-application can show billing and reset details without reading the text.
-Catch it around a direct call; through an agent it is on
-`ToolOutput.exception` (llama-index-core 0.14 and later).
+### Attributes
 
-| Attribute | Set on | Value |
+`LexAPIToolError` carries the billing and reset information as attributes,
+so an application can show it without reading the text. An attribute that
+does not apply, or that the API did not send, is `None` (`quota_exhausted`
+is `False`). Values are the SDK's, unchanged and not cut; a string that is
+empty or blank counts as not sent.
+
+| Attribute | Type | Set on |
 |---|---|---|
-| `code`, `status` | every error | the code and HTTP status (`status` is `None` without an HTTP answer) |
-| `retry_after` | errors with a server-named wait | seconds; never set on an exhausted quota or a failed payment |
-| `quota_exhausted` | an exhausted quota (429) | `True`; `False` on every other error |
-| `resets_at` | `CREDITS_EXHAUSTED`, an exhausted quota | when the pool or quota refills (ISO-8601), when the API says |
-| `operation`, `weight`, `available`, `included`, `topup`, `used` | `CREDITS_EXHAUSTED` | the refused operation and the credit figures, when the API sends them |
-| `upgrade_url` | `TIER_FORBIDDEN` | the plan gate's `upgradeUrl`, when sent |
-| `billing_url`, `access_ended_at` | `PAYMENT_PAST_DUE` | where to pay the open invoice, and when access ended, when sent |
+| `code` | `str` | every error: the API's code, or the package's own `INVALID_ARGUMENT`, `CLOSED`, `INVALID_RESPONSE` |
+| `status` | `int` or `None` | the HTTP status; `None` without an HTTP answer |
+| `retry_after` | `float` or `None` | the wait in seconds the server named, also when a retry cannot help (the text shows it only when it can); `None` on an exhausted quota and a failed payment |
+| `quota_exhausted` | `bool` | `True` on an exhausted quota (code `QUOTA_EXHAUSTED`, or a 429 of the legacy quota shape) |
+| `resets_at` | `str` or `None` | `CREDITS_EXHAUSTED` and an exhausted quota: when the pool or quota refills (ISO-8601) |
+| `operation` | `str` or `None` | `CREDITS_EXHAUSTED`: the refused operation |
+| `weight`, `available`, `included`, `topup`, `used` | `int` or `None` | `CREDITS_EXHAUSTED`: credits needed, left, included in the plan, bought as top-ups, used. The API sends no link with this error |
+| `upgrade_url` | `str` or `None` | `TIER_FORBIDDEN`: the plan gate's link; may be a path relative to https://lex-api.com (for example `/pricing`). Never set on a failed payment |
+| `billing_url` | `str` or `None` | `PAYMENT_PAST_DUE`: where to pay the open invoice |
+| `access_ended_at` | `str` or `None` | `PAYMENT_PAST_DUE`: when access ended (ISO-8601) |
 
-An attribute that does not apply, or that the API did not send, is `None`
-(`quota_exhausted` is `False`). An answer that could not be read carries
-none of them.
+An answer that could not be read carries none of them. `LexAPIToolError`
+can be pickled and copied with its attributes.
+
+A direct call, and a tool's `call()` / `acall()`, raise `LexAPIToolError`:
+
+```python
+from llama_index.tools.lexapi import LexAPIToolError
+
+with LexAPIToolSpec() as spec:
+    try:
+        spec.lexapi_read_document("32016R0679")
+    except LexAPIToolError as err:
+        print(err.code, err.resets_at, err.available)
+
+    read = {t.metadata.name: t for t in spec.to_tool_list()}["lexapi_read_document"]
+    try:
+        read.call(celex="32016R0679")
+    except LexAPIToolError as err:
+        print("call():", err.code)
+```
+
+In an agent, on llama-index-core 0.14 and later, the error is on the tool
+output's `exception` when `is_error` is set, both in the `ToolCallResult`
+stream event and in the run's `tool_calls`:
+
+```python
+# llama-index-core 0.14 and later
+from llama_index.core.agent.workflow import FunctionAgent, ToolCallResult
+
+spec = LexAPIToolSpec()
+agent = FunctionAgent(tools=spec.to_tool_list(), llm=my_llm)
+handler = agent.run("What does Article 17 of Regulation 2016/679 say?")
+async for event in handler.stream_events():
+    if isinstance(event, ToolCallResult) and event.tool_output.is_error:
+        print("event:", event.tool_output.exception.code)
+response = await handler
+for call in response.tool_calls:
+    if call.tool_output.is_error and isinstance(call.tool_output.exception, LexAPIToolError):
+        print("result:", call.tool_output.exception.code)
+await spec.aclose()
+```
+
+On any version, and the only way on llama-index-core 0.13 (where
+`ToolOutput` has no `exception`), wrap the tools:
+
+```python
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.tools import FunctionTool
+from llama_index.tools.lexapi import LexAPIToolError, LexAPIToolSpec
+
+spec = LexAPIToolSpec()
+errors = []
+
+
+def wrap(tool):
+    async def run(**kwargs):
+        try:
+            return str((await tool.acall(**kwargs)).raw_output)
+        except LexAPIToolError as err:
+            errors.append(err)
+            raise
+
+    return FunctionTool.from_defaults(async_fn=run, tool_metadata=tool.metadata)
+
+
+agent = FunctionAgent(tools=[wrap(t) for t in spec.to_tool_list()], llm=my_llm)
+await agent.run("What does Article 17 of Regulation 2016/679 say?")
+for err in errors:
+    print("wrapped:", err.code, err.resets_at)
+await spec.aclose()
+```
+
+### Other failures
 
 Invalid constructor options (`similarity_top_k`, `unresolved`, `max_chars`,
 client wiring) raise `ValueError` when the tool spec is built.
@@ -185,6 +281,8 @@ hits without a CELEX number.
 - A text is passed on as the text for a date only when LexAPI established it
   for that date. For any other answer this package passes on no text, unless
   you opt into `unresolved="keep_labelled"` for searches.
+- No national law and no case-law search: the tools cover EU legislation.
+  Case law is in `llama-index-retrievers-lexapi`.
 - Not legal advice.
 
 ## Tests
