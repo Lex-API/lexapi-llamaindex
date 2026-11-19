@@ -439,6 +439,19 @@ MUTANTS = [
         "    if not query:",
     ),
     Mutant(
+        "non-string argument reported as empty",
+        TOOLS_BASE,
+        '        raise LexAPIToolError.invalid_argument(f"{name} must be a string")',
+        '        raise LexAPIToolError.invalid_argument(f"{name} must not be empty")',
+    ),
+    Mutant(
+        "retriever checks the query before closed",
+        RET_BASE,
+        "        self._clients.check_open()\n        _check_query(query_bundle.query_str)\n"
+        "        result = self._search",
+        "        _check_query(query_bundle.query_str)\n        result = self._search",
+    ),
+    Mutant(
         "blank article sent",
         TOOLS_BASE,
         '        _check_optional(article, "article")\n',

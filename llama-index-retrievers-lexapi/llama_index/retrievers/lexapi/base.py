@@ -78,7 +78,9 @@ class InvalidArgumentError(ValueError):
     """An argument was refused before any request was sent."""
 
 
-def _check_query(query: str) -> None:
+def _check_query(query: object) -> None:
+    if not isinstance(query, str):
+        raise InvalidArgumentError("query must be a string")
     if not query.strip():
         raise InvalidArgumentError("query must not be empty")
 
@@ -152,11 +154,13 @@ class _LexAPIRetriever(BaseRetriever):
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         # No try/except: an SDK error (402, 403 past due, 429, 401...)
         # propagates. It must never read as "no law found".
+        self._clients.check_open()
         _check_query(query_bundle.query_str)
         result = self._search(query_bundle.query_str)
         return self._finish(query_bundle, result)
 
     async def _aretrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        self._clients.check_open()
         _check_query(query_bundle.query_str)
         client = self._clients.async_
         if client is None:

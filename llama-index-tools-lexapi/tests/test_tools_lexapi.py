@@ -1533,3 +1533,53 @@ def test_non_strict_json_gives_the_unreadable_text(token: str) -> None:
         with pytest.raises(LexAPIToolError) as info:
             getattr(spec, name)(**args)
         assert str(info.value) == WITH_STATUS
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "message"),
+    [
+        (
+            "lexapi_read_document",
+            {"celex": "32099R0001", "article": 17},
+            "Invalid argument: article must be a string",
+        ),
+        (
+            "lexapi_read_document",
+            {"celex": "32099R0001", "article": ["art_17"]},
+            "Invalid argument: article must be a string",
+        ),
+        (
+            "lexapi_legislation_as_of",
+            {"celex": "32099R0001", "as_of": AS_OF, "provision": 17},
+            "Invalid argument: provision must be a string",
+        ),
+        ("lexapi_read_document", {"celex": 32016}, "Invalid argument: celex must be a string"),
+        ("lexapi_search_legislation", {"query": 5}, "Invalid argument: query must be a string"),
+        (
+            "lexapi_legislation_as_of",
+            {"celex": None, "as_of": AS_OF},
+            "Invalid argument: celex must be a string",
+        ),
+    ],
+)
+async def test_non_string_arguments_are_refused(
+    name: str, args: dict[str, Any], message: str
+) -> None:
+    spec, requests = spec_for(ROUTES)
+    aclient, arecorder = make_async_client(ROUTES)
+    aspec = LexAPIToolSpec(async_client=aclient)
+    with pytest.raises(LexAPIToolError) as info:
+        getattr(spec, name)(**args)
+    assert str(info.value) == message
+    with pytest.raises(LexAPIToolError) as ainfo:
+        await getattr(aspec, "a" + name)(**args)
+    assert str(ainfo.value) == message
+    assert requests == [] and arecorder.requests == []
+
+
+def test_closed_is_checked_before_arguments() -> None:
+    spec, _ = spec_for(ROUTES)
+    spec.close()
+    with pytest.raises(LexAPIToolError) as info:
+        spec.lexapi_search_legislation("   ")
+    assert str(info.value) == "LexAPIToolSpec is closed; create a new one."

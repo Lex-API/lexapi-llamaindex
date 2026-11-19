@@ -156,14 +156,16 @@ def _check_date(value: object, name: str = "as_of") -> None:
 
 
 def _check_not_empty(value: object, name: str) -> None:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
+        raise LexAPIToolError.invalid_argument(f"{name} must be a string")
+    if not value.strip():
         raise LexAPIToolError.invalid_argument(f"{name} must not be empty")
 
 
 def _check_optional(value: object, name: str) -> None:
     """An optional argument may be absent (``None``) but not blank."""
-    if value is not None and (not isinstance(value, str) or not value.strip()):
-        raise LexAPIToolError.invalid_argument(f"{name} must not be empty")
+    if value is not None:
+        _check_not_empty(value, name)
 
 
 def _check_language(value: object) -> None:

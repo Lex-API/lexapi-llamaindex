@@ -1098,3 +1098,36 @@ def test_argument_errors_share_one_exported_class() -> None:
     ):
         with pytest.raises(InvalidArgumentError):
             build()
+
+
+def test_invalid_argument_error_is_exported() -> None:
+    import llama_index.retrievers.lexapi as package
+
+    assert "InvalidArgumentError" in package.__all__
+    assert package.InvalidArgumentError is InvalidArgumentError
+
+
+def test_non_string_query_is_refused() -> None:
+    from llama_index.core.schema import QueryBundle
+
+    client, recorder = make_client({LEG: fixture_route("legislation.mixed.json")})
+    retriever = LexAPILegislationRetriever(client)
+    bundle = QueryBundle("q")
+    bundle.query_str = 5  # type: ignore[assignment]
+    with pytest.raises(InvalidArgumentError, match=r"^query must be a string$"):
+        retriever.retrieve(bundle)
+    assert recorder.requests == []
+
+
+async def test_closed_is_checked_before_the_query() -> None:
+    client, _ = make_client({LEG: fixture_route("legislation.mixed.json")})
+    aclient, _ = make_async_client({LEG: fixture_route("legislation.mixed.json")})
+    for retriever in (
+        LexAPILegislationRetriever(client, aclient),
+        LexAPICaseLawRetriever(client, aclient),
+    ):
+        await retriever.aclose()
+        with pytest.raises(ClientClosedError):
+            retriever.retrieve("   ")
+        with pytest.raises(ClientClosedError):
+            await retriever.aretrieve("")

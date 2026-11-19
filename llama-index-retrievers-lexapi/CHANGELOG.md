@@ -8,25 +8,26 @@
 - `LexAPICaseLawRetriever`: semantic search over CJEU case law, always with
   full decision texts, optional `max_chars` (at least 200), and `court` /
   `date_from` / `date_to` filters.
-- Hits sharing a node id are merged (first position, best text kept).
-- Nodes built with `lexapi.passages`: citation in the text, metadata never
-  embedded, `EXCLUDED_LLM_METADATA_KEYS` hidden from the LLM view.
+- Nodes built with `lexapi.passages`: the citation in the text's `Source:`
+  line, metadata never embedded, and `EXCLUDED_LLM_METADATA_KEYS` (the
+  duplicate citation keys) hidden from the LLM view, so the model reads the
+  citation once. Hits sharing a node id are merged (first position, best
+  text kept).
+- Cut rule for `max_chars`: a text within the limit is unchanged; a longer
+  one is cut at a paragraph break in the second half of the limit, else a
+  line break or a space there, else at the limit, with a note.
 - `retrieve_with_result` / `aretrieve_with_result` return the nodes, a
   `LexAPICallReport` and the `PassageResult`; `LexAPIRetrievalEvent`
   carries the same for each retrieval.
-- `as_of`, `date_from` and `date_to` are checked before any request.
-- `with` / `async with`, `close()` / `aclose()`; a closed retriever refuses
-  calls.
-- `ClientClosedError` for use after `close()` / `aclose()`.
-- LLM view hides the duplicate citation keys; the model reads the citation
-  once, in the `Source:` line.
-- Cut rule: a text within the limit is unchanged; a longer one is cut at a
-  paragraph break in the second half of the limit, else a line break or a
-  space there, else at the limit.
+- Arguments are checked before any request and refused with
+  `InvalidArgumentError` (a `ValueError`): an empty or whitespace-only query
+  (`query must not be empty`), and `similarity_top_k`, `max_chars`,
+  `unresolved`, `as_of`, `date_from` and `date_to`. A bad `celex`
+  restriction and wrong client wiring raise `ValueError`.
+- `with` / `async with`, `close()` / `aclose()`; a closed retriever raises
+  `ClientClosedError`, before any other check.
+- SDK errors propagate unchanged. The pinned `lexapi-client` reads answers
+  as strict JSON (`NaN` and `Infinity` are refused) and checks their shape:
+  such answers raise `lexapi.InvalidResponseError`.
 - Depends on `lexapi-client` from its repository at commit `19da4dd` until
   0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).
-- The pinned `lexapi-client` reads answers as strict JSON (`NaN` and
-  `Infinity` are refused): retrievers raise `lexapi.InvalidResponseError`.
-- An empty or whitespace-only query raises `InvalidArgumentError("query must
-  not be empty")` before any request; the other argument errors use the
-  same exported class (a `ValueError`), with unchanged texts.

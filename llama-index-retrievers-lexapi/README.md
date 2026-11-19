@@ -16,7 +16,8 @@ Version 0.1.0 is not on PyPI yet. Install it from this repository:
 pip install "llama-index-retrievers-lexapi @ git+https://github.com/Lex-API/lexapi-llamaindex#subdirectory=llama-index-retrievers-lexapi"
 ```
 
-After the release it installs from PyPI with `pip install llama-index-retrievers-lexapi`.
+After the release it installs from PyPI with
+`pip install llama-index-retrievers-lexapi`.
 
 Python 3.11 or later. You need a LexAPI key (`lex_...`) from your LexAPI
 dashboard, in the environment as `LEXAPI_API_KEY` or passed as `api_key=`.
@@ -170,11 +171,19 @@ descending.
 
 ## Errors
 
-An empty or whitespace-only query raises `InvalidArgumentError` (`query must
-not be empty`) before any request. An error is never turned into an empty list. An answer LexAPI's client
+Arguments are checked before any request and refused with
+`InvalidArgumentError`, a `ValueError` importable from
+`llama_index.retrievers.lexapi`: an empty or whitespace-only query (`query
+must not be empty`), and the constructor's `similarity_top_k`, `max_chars`,
+`unresolved`, `as_of`, `date_from` and `date_to`. A bad `celex` restriction
+and wrong client wiring raise a plain `ValueError`. A closed retriever raises
+`ClientClosedError` before any other check.
+
+An error is never turned into an empty list. An answer LexAPI's client
 cannot read raises an error; it is never read as an empty result, and a 2xx
 answer is never retried. A result
-can be empty when the search had no hits, when `celex` filtered every hit out, when
+can be empty when the search had no hits, when `celex` filtered every hit
+out, when
 `unresolved="drop"` left every hit out, when `emit_withheld=False` left out
 withheld hits, or when the API sent hits without a CELEX number (counted in
 `report.uncitable`). SDK exceptions are raised unchanged; an API error's
