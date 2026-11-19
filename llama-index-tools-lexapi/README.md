@@ -19,7 +19,8 @@ Version 0.1.0 is not on PyPI yet. Install it from this repository:
 pip install "llama-index-tools-lexapi @ git+https://github.com/Lex-API/lexapi-llamaindex#subdirectory=llama-index-tools-lexapi"
 ```
 
-After the release it installs from PyPI with `pip install llama-index-tools-lexapi`.
+After the release it installs from PyPI with
+`pip install llama-index-tools-lexapi`.
 
 Python 3.11 or later. You need a LexAPI key (`lex_...`) from your LexAPI
 dashboard, in the environment as `LEXAPI_API_KEY` or passed as `api_key=`.
@@ -66,7 +67,8 @@ raise `TypeError`.
   <date>.]`, then `Hint from LexAPI: ...` when the API sent a hint.
 - **Read:** numbered the same way. `max_chars` (at least 200, default
   20000, `None` for no bound) bounds the sum of the article texts and
-  notices shown, counted as they are shown; the numbering, `Source:` lines, the cut note and the list
+  notices shown, counted as they are shown; the numbering, `Source:`
+  lines, the cut note and the list
   of articles not shown come on top. When the first article alone is over
   the budget its text is cut and ends with `[Text cut by
   llama-index-tools-lexapi: K of N characters shown. The full text is at
@@ -129,18 +131,22 @@ to the model as the tool's error output.
   shape: `LexAPI error INVALID_RESPONSE (HTTP <status>): The answer could
   not be read.` (without `(HTTP <status>)` when there is none).
 - An invalid argument, before any request: `Invalid argument: ...` (an
-  empty `query` or `celex`, a `language` that is not a two-letter code, a
-  date that is not `YYYY-MM-DD`).
+  empty `query` or `celex`, a blank `article` or `provision`, a value that
+  is not a string, a `language` that is not a two-letter code, a date that
+  is not `YYYY-MM-DD`).
 - After `close()`: `LexAPIToolSpec is closed; create a new one.`
 - SDK exceptions are not attached; an API error's message is the API's own
   text.
 - Anything shaped like an API key is masked as `lex_***`.
 
+Invalid constructor options (`similarity_top_k`, `unresolved`, `max_chars`,
+client wiring) raise `ValueError` when the tool spec is built.
+
 An error is never turned into an empty answer. An answer LexAPI's client
 cannot read raises an error; it is never read as an empty result, and a 2xx
-answer is never retried. An answer
-says nothing matched when the search had no hits, when `unresolved="drop"`
-left every hit out, or when the API sent hits without a CELEX number.
+answer is never retried. An answer says nothing matched when the search had
+no hits, when `unresolved="drop"` left every hit out, or when the API sent
+hits without a CELEX number.
 
 ## What this package does not do
 

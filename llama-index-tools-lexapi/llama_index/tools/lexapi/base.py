@@ -156,8 +156,16 @@ def _check_date(value: object, name: str = "as_of") -> None:
 
 
 def _check_not_empty(value: object, name: str) -> None:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
+        raise LexAPIToolError.invalid_argument(f"{name} must be a string")
+    if not value.strip():
         raise LexAPIToolError.invalid_argument(f"{name} must not be empty")
+
+
+def _check_optional(value: object, name: str) -> None:
+    """An optional argument may be absent (``None``) but not blank."""
+    if value is not None:
+        _check_not_empty(value, name)
 
 
 def _check_language(value: object) -> None:
@@ -475,15 +483,19 @@ class LexAPIToolSpec(BaseToolSpec):
         if as_of is not None:
             _check_date(as_of)
 
-    def _check_read(self, celex: object, language: object) -> None:
+    def _check_read(self, celex: object, article: object, language: object) -> None:
         self._check_open()
         _check_not_empty(celex, "celex")
+        _check_optional(article, "article")
         _check_language(language)
 
-    def _check_as_of(self, celex: object, as_of: object, language: object) -> None:
+    def _check_as_of(
+        self, celex: object, as_of: object, provision: object, language: object
+    ) -> None:
         self._check_open()
         _check_not_empty(celex, "celex")
         _check_date(as_of)
+        _check_optional(provision, "provision")
         _check_language(language)
 
     def _emit(self, tool: str, report: LexAPICallReport, result: PassageResult) -> None:
@@ -590,7 +602,7 @@ class LexAPIToolSpec(BaseToolSpec):
             article: Optional article to read: art_17, 17 or 'Article 17'.
             language: Optional language of the text (ISO 639-1, for example en).
         """
-        self._check_read(celex, language)
+        self._check_read(celex, article, language)
         client = self._clients.sync
         response = _call(
             lambda: client.get_document(celex, **self._document_kwargs(article, language))
@@ -601,7 +613,7 @@ class LexAPIToolSpec(BaseToolSpec):
         self, celex: str, article: str | None = None, language: str | None = None
     ) -> str:
         """Async variant of lexapi_read_document."""
-        self._check_read(celex, language)
+        self._check_read(celex, article, language)
         client = self._clients.async_
         if client is None:
             return await self._in_thread(self.lexapi_read_document, celex, article, language)
@@ -625,7 +637,7 @@ class LexAPIToolSpec(BaseToolSpec):
             provision: Optional article (art_17), annex (anx_III) or recitals (rct_26-28).
             language: Optional language of the text (ISO 639-1, for example en).
         """
-        self._check_as_of(celex, as_of, language)
+        self._check_as_of(celex, as_of, provision, language)
         client = self._clients.sync
         response = _call(
             lambda: client.legislation_as_of(
@@ -642,7 +654,7 @@ class LexAPIToolSpec(BaseToolSpec):
         language: str | None = None,
     ) -> str:
         """Async variant of lexapi_legislation_as_of."""
-        self._check_as_of(celex, as_of, language)
+        self._check_as_of(celex, as_of, provision, language)
         client = self._clients.async_
         if client is None:
             return await self._in_thread(

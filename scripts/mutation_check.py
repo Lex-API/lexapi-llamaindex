@@ -213,7 +213,8 @@ MUTANTS = [
     Mutant(
         "retriever date not validated",
         RET_BASE,
-        '    raise ValueError(f"{name} must be a date in the form YYYY-MM-DD; got {value!r}")',
+        '    raise InvalidArgumentError(f"{name} must be a date in the form YYYY-MM-DD; '
+        'got {value!r}")',
         "    return value  # type: ignore[return-value]",
     ),
     Mutant(
@@ -420,6 +421,55 @@ MUTANTS = [
         "        break",
     ),
     Mutant(
+        "empty query sent by the retrievers (sync)",
+        RET_BASE,
+        "        _check_query(query_bundle.query_str)\n        result = self._search",
+        "        result = self._search",
+    ),
+    Mutant(
+        "empty query sent by the retrievers (async)",
+        RET_BASE,
+        "        _check_query(query_bundle.query_str)\n        client = self._clients.async_",
+        "        client = self._clients.async_",
+    ),
+    Mutant(
+        "whitespace-only query accepted by the retrievers",
+        RET_BASE,
+        "    if not query.strip():",
+        "    if not query:",
+    ),
+    Mutant(
+        "non-string argument reported as empty",
+        TOOLS_BASE,
+        '        raise LexAPIToolError.invalid_argument(f"{name} must be a string")',
+        '        raise LexAPIToolError.invalid_argument(f"{name} must not be empty")',
+    ),
+    Mutant(
+        "retriever checks the query before closed",
+        RET_BASE,
+        "        self._clients.check_open()\n        _check_query(query_bundle.query_str)\n"
+        "        result = self._search",
+        "        _check_query(query_bundle.query_str)\n        result = self._search",
+    ),
+    Mutant(
+        "blank article sent",
+        TOOLS_BASE,
+        '        _check_optional(article, "article")\n',
+        "",
+    ),
+    Mutant(
+        "blank provision sent",
+        TOOLS_BASE,
+        '        _check_optional(provision, "provision")\n',
+        "",
+    ),
+    Mutant(
+        "budget refuses an exact fill",
+        TOOLS_BASE,
+        "        if length <= remaining:",
+        "        if length < remaining:",
+    ),
+    Mutant(
         "whitespace-only celex accepted",
         TOOLS_BASE,
         "    if not isinstance(celex, str) or not celex.strip():",
@@ -482,8 +532,8 @@ MUTANTS = [
     Mutant(
         "read language not checked",
         TOOLS_BASE,
-        '        _check_not_empty(celex, "celex")\n        _check_language(language)\n\n',
-        '        _check_not_empty(celex, "celex")\n\n',
+        '        _check_optional(article, "article")\n        _check_language(language)\n',
+        '        _check_optional(article, "article")\n',
     ),
     Mutant(
         "citation shown twice to the LLM",

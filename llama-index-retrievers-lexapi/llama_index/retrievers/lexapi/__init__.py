@@ -3,6 +3,7 @@
 from llama_index.retrievers.lexapi._client import ClientClosedError
 from llama_index.retrievers.lexapi._nodes import EXCLUDED_LLM_METADATA_KEYS, LexAPICallReport
 from llama_index.retrievers.lexapi.base import (
+    InvalidArgumentError,
     LexAPICaseLawRetriever,
     LexAPILegislationRetriever,
     LexAPIRetrieval,
@@ -12,6 +13,7 @@ from llama_index.retrievers.lexapi.base import (
 __all__ = [
     "EXCLUDED_LLM_METADATA_KEYS",
     "ClientClosedError",
+    "InvalidArgumentError",
     "LexAPICallReport",
     "LexAPICaseLawRetriever",
     "LexAPILegislationRetriever",

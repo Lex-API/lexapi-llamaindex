@@ -31,6 +31,7 @@ from llama_index.core.schema import MetadataMode, NodeWithScore, TextNode
 from llama_index.retrievers.lexapi import (
     EXCLUDED_LLM_METADATA_KEYS,
     ClientClosedError,
+    InvalidArgumentError,
     LexAPICallReport,
     LexAPICaseLawRetriever,
     LexAPILegislationRetriever,
@@ -1049,3 +1050,84 @@ def test_the_second_half_lower_bound(position: int, kept: str) -> None:
     text = "a" * position + " " + "b" * 200
     out, cut = cut_text(text, 100)
     assert cut and out.split("\n[Text cut by ")[0] == kept
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_non_strict_json_raises(token: str) -> None:
+    body = json.dumps(load_fixture("legislation.mixed.json")).replace("0.91", token, 1)
+    client, _ = make_client({LEG: Route(body), CASE: Route(body)})
+    for retriever in (LexAPILegislationRetriever(client), LexAPICaseLawRetriever(client)):
+        with pytest.raises(lexapi.InvalidResponseError):
+            retriever.retrieve("q")
+
+
+# ── empty queries ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\n\t"])
+async def test_empty_query_is_refused_before_any_request(query: str) -> None:
+    routes = {
+        LEG: fixture_route("legislation.mixed.json"),
+        CASE: fixture_route("caselaw.with-text.json"),
+    }
+    client, recorder = make_client(routes)
+    aclient, arecorder = make_async_client(routes)
+    for retriever in (
+        LexAPILegislationRetriever(client, aclient),
+        LexAPICaseLawRetriever(client, aclient),
+    ):
+        for call in (retriever.retrieve, retriever.retrieve_with_result):
+            with pytest.raises(InvalidArgumentError) as info:
+                call(query)
+            assert str(info.value) == "query must not be empty"
+        with pytest.raises(InvalidArgumentError, match=r"^query must not be empty$"):
+            await retriever.aretrieve(query)
+        with pytest.raises(InvalidArgumentError, match=r"^query must not be empty$"):
+            await retriever.aretrieve_with_result(query)
+    assert recorder.requests == [] and arecorder.requests == []
+
+
+def test_argument_errors_share_one_exported_class() -> None:
+    assert issubclass(InvalidArgumentError, ValueError)
+    client, _ = make_client({})
+    for build in (
+        lambda: LexAPILegislationRetriever(client, similarity_top_k=0),
+        lambda: LexAPILegislationRetriever(client, as_of="2099-02-30"),
+        lambda: LexAPILegislationRetriever(client, unresolved="x"),  # type: ignore[arg-type]
+        lambda: LexAPICaseLawRetriever(client, max_chars=10),
+    ):
+        with pytest.raises(InvalidArgumentError):
+            build()
+
+
+def test_invalid_argument_error_is_exported() -> None:
+    import llama_index.retrievers.lexapi as package
+
+    assert "InvalidArgumentError" in package.__all__
+    assert package.InvalidArgumentError is InvalidArgumentError
+
+
+def test_non_string_query_is_refused() -> None:
+    from llama_index.core.schema import QueryBundle
+
+    client, recorder = make_client({LEG: fixture_route("legislation.mixed.json")})
+    retriever = LexAPILegislationRetriever(client)
+    bundle = QueryBundle("q")
+    bundle.query_str = 5  # type: ignore[assignment]
+    with pytest.raises(InvalidArgumentError, match=r"^query must be a string$"):
+        retriever.retrieve(bundle)
+    assert recorder.requests == []
+
+
+async def test_closed_is_checked_before_the_query() -> None:
+    client, _ = make_client({LEG: fixture_route("legislation.mixed.json")})
+    aclient, _ = make_async_client({LEG: fixture_route("legislation.mixed.json")})
+    for retriever in (
+        LexAPILegislationRetriever(client, aclient),
+        LexAPICaseLawRetriever(client, aclient),
+    ):
+        await retriever.aclose()
+        with pytest.raises(ClientClosedError):
+            retriever.retrieve("   ")
+        with pytest.raises(ClientClosedError):
+            await retriever.aretrieve("")
