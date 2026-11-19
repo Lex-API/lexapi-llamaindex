@@ -170,7 +170,8 @@ descending.
 
 ## Errors
 
-An error is never turned into an empty list. An answer LexAPI's client
+An empty or whitespace-only query raises `InvalidArgumentError` (`query must
+not be empty`) before any request. An error is never turned into an empty list. An answer LexAPI's client
 cannot read raises an error; it is never read as an empty result, and a 2xx
 answer is never retried. A result
 can be empty when the search had no hits, when `celex` filtered every hit out, when

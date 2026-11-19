@@ -31,6 +31,7 @@ from llama_index.core.schema import MetadataMode, NodeWithScore, TextNode
 from llama_index.retrievers.lexapi import (
     EXCLUDED_LLM_METADATA_KEYS,
     ClientClosedError,
+    InvalidArgumentError,
     LexAPICallReport,
     LexAPICaseLawRetriever,
     LexAPILegislationRetriever,
@@ -1058,3 +1059,42 @@ def test_non_strict_json_raises(token: str) -> None:
     for retriever in (LexAPILegislationRetriever(client), LexAPICaseLawRetriever(client)):
         with pytest.raises(lexapi.InvalidResponseError):
             retriever.retrieve("q")
+
+
+# ── empty queries ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\n\t"])
+async def test_empty_query_is_refused_before_any_request(query: str) -> None:
+    routes = {
+        LEG: fixture_route("legislation.mixed.json"),
+        CASE: fixture_route("caselaw.with-text.json"),
+    }
+    client, recorder = make_client(routes)
+    aclient, arecorder = make_async_client(routes)
+    for retriever in (
+        LexAPILegislationRetriever(client, aclient),
+        LexAPICaseLawRetriever(client, aclient),
+    ):
+        for call in (retriever.retrieve, retriever.retrieve_with_result):
+            with pytest.raises(InvalidArgumentError) as info:
+                call(query)
+            assert str(info.value) == "query must not be empty"
+        with pytest.raises(InvalidArgumentError, match=r"^query must not be empty$"):
+            await retriever.aretrieve(query)
+        with pytest.raises(InvalidArgumentError, match=r"^query must not be empty$"):
+            await retriever.aretrieve_with_result(query)
+    assert recorder.requests == [] and arecorder.requests == []
+
+
+def test_argument_errors_share_one_exported_class() -> None:
+    assert issubclass(InvalidArgumentError, ValueError)
+    client, _ = make_client({})
+    for build in (
+        lambda: LexAPILegislationRetriever(client, similarity_top_k=0),
+        lambda: LexAPILegislationRetriever(client, as_of="2099-02-30"),
+        lambda: LexAPILegislationRetriever(client, unresolved="x"),  # type: ignore[arg-type]
+        lambda: LexAPICaseLawRetriever(client, max_chars=10),
+    ):
+        with pytest.raises(InvalidArgumentError):
+            build()

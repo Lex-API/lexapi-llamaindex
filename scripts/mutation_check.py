@@ -213,7 +213,8 @@ MUTANTS = [
     Mutant(
         "retriever date not validated",
         RET_BASE,
-        '    raise ValueError(f"{name} must be a date in the form YYYY-MM-DD; got {value!r}")',
+        '    raise InvalidArgumentError(f"{name} must be a date in the form YYYY-MM-DD; '
+        'got {value!r}")',
         "    return value  # type: ignore[return-value]",
     ),
     Mutant(
@@ -418,6 +419,24 @@ MUTANTS = [
         TOOLS_BASE,
         "            else:\n                shown.append(passage)\n        break",
         "        break",
+    ),
+    Mutant(
+        "empty query sent by the retrievers (sync)",
+        RET_BASE,
+        "        _check_query(query_bundle.query_str)\n        result = self._search",
+        "        result = self._search",
+    ),
+    Mutant(
+        "empty query sent by the retrievers (async)",
+        RET_BASE,
+        "        _check_query(query_bundle.query_str)\n        client = self._clients.async_",
+        "        client = self._clients.async_",
+    ),
+    Mutant(
+        "whitespace-only query accepted by the retrievers",
+        RET_BASE,
+        "    if not query.strip():",
+        "    if not query:",
     ),
     Mutant(
         "blank article sent",

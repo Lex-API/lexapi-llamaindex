@@ -27,3 +27,6 @@
   0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).
 - The pinned `lexapi-client` reads answers as strict JSON (`NaN` and
   `Infinity` are refused): retrievers raise `lexapi.InvalidResponseError`.
+- An empty or whitespace-only query raises `InvalidArgumentError("query must
+  not be empty")` before any request; the other argument errors use the
+  same exported class (a `ValueError`), with unchanged texts.

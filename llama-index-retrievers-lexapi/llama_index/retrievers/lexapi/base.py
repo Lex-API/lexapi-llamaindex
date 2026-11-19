@@ -74,9 +74,20 @@ _RESULT_HOLDER: contextvars.ContextVar[dict[int, _Captured] | None] = contextvar
 )
 
 
+class InvalidArgumentError(ValueError):
+    """An argument was refused before any request was sent."""
+
+
+def _check_query(query: str) -> None:
+    if not query.strip():
+        raise InvalidArgumentError("query must not be empty")
+
+
 def _check_top_k(value: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
-        raise ValueError(f"similarity_top_k must be an integer from 1 to {maximum}; got {value!r}")
+        raise InvalidArgumentError(
+            f"similarity_top_k must be an integer from 1 to {maximum}; got {value!r}"
+        )
     return value
 
 
@@ -84,7 +95,7 @@ def _check_max_chars(value: int | None) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < MIN_MAX_CHARS:
-        raise ValueError(
+        raise InvalidArgumentError(
             f"max_chars must be an integer of at least {MIN_MAX_CHARS}, or None; got {value!r}"
         )
     return value
@@ -109,7 +120,7 @@ def _iso(value: DateLike | None, name: str = "as_of") -> str | None:
             pass
         else:
             return value
-    raise ValueError(f"{name} must be a date in the form YYYY-MM-DD; got {value!r}")
+    raise InvalidArgumentError(f"{name} must be a date in the form YYYY-MM-DD; got {value!r}")
 
 
 class _LexAPIRetriever(BaseRetriever):
@@ -141,10 +152,12 @@ class _LexAPIRetriever(BaseRetriever):
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         # No try/except: an SDK error (402, 403 past due, 429, 401...)
         # propagates. It must never read as "no law found".
+        _check_query(query_bundle.query_str)
         result = self._search(query_bundle.query_str)
         return self._finish(query_bundle, result)
 
     async def _aretrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        _check_query(query_bundle.query_str)
         client = self._clients.async_
         if client is None:
             result = await asyncio.to_thread(self._search, query_bundle.query_str)
@@ -304,7 +317,7 @@ class LexAPILegislationRetriever(_LexAPIRetriever):
     ) -> None:
         self._similarity_top_k = _check_top_k(similarity_top_k, MAX_LEGISLATION_TOP_K)
         if unresolved not in get_args(UnresolvedPolicy):
-            raise ValueError(
+            raise InvalidArgumentError(
                 f"unresolved must be one of {', '.join(get_args(UnresolvedPolicy))}; "
                 f"got {unresolved!r}"
             )
