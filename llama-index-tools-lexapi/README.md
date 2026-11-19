@@ -177,7 +177,7 @@ empty or blank counts as not sent.
 
 | Attribute | Type | Set on |
 |---|---|---|
-| `code` | `str` | every error: the API's code, or the package's own `INVALID_ARGUMENT`, `CLOSED`, `INVALID_RESPONSE` |
+| `code` | `str` | every error: the API's code as sent (`UNKNOWN`, as in the text, when it is blank), or the package's own `INVALID_ARGUMENT`, `CLOSED`, `INVALID_RESPONSE` |
 | `status` | `int` or `None` | the HTTP status; `None` without an HTTP answer |
 | `retry_after` | `float` or `None` | the wait in seconds the server named, also when a retry cannot help (the text shows it only when it can); `None` on an exhausted quota and a failed payment |
 | `quota_exhausted` | `bool` | `True` on an exhausted quota (code `QUOTA_EXHAUSTED`, or a 429 of the legacy quota shape) |

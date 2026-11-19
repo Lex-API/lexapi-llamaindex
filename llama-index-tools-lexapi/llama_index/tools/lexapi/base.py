@@ -231,6 +231,8 @@ class LexAPIToolError(Exception):
         if api_message and api_message[-1] not in ".!?":
             api_message += "."
         code = _clean(error.code) or LexAPIError.default_code
+        # The attribute is the SDK's code, or the text's UNKNOWN when it is blank.
+        code_attribute = error.code if _clean(error.code) else LexAPIError.default_code
         message = f"LexAPI error {code}{http}" + (f": {api_message}" if api_message else ".")
         retry_after = error.retry_after
         fields: dict[str, Any] = {}
@@ -238,7 +240,7 @@ class LexAPIToolError(Exception):
             resets_at = _clean(error.resets_at)
             fields.update(
                 resets_at=error.resets_at if resets_at else None,
-                operation=error.operation,
+                operation=error.operation if _clean(error.operation) else None,
                 weight=error.weight,
                 available=error.available,
                 included=error.included,
@@ -277,7 +279,7 @@ class LexAPIToolError(Exception):
         if wait is not None:
             message += f" Retry after {wait} s."
         return cls(
-            _mask(message), code=error.code, status=status, retry_after=retry_after, **fields
+            _mask(message), code=code_attribute, status=status, retry_after=retry_after, **fields
         )
 
     @classmethod

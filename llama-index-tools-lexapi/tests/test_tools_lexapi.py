@@ -786,6 +786,72 @@ def test_billing_url_already_in_the_message_is_not_repeated() -> None:
     assert error.billing_url == BILLING
 
 
+@pytest.mark.parametrize(("length", "cut"), [(200, False), (201, True)])
+def test_relayed_value_cap_boundary(length: int, cut: bool) -> None:
+    url = "https://lex-api.com/" + "u" * (length - 20)
+    assert len(url) == length
+    body = {"error": "Payment past due", "code": "PAYMENT_PAST_DUE", "billingUrl": url}
+    [error, *_] = tool_errors(error_routes_body(body, 403))
+    shown = f"{url[:200]}…" if cut else url
+    assert (
+        str(error)
+        == f"LexAPI error PAYMENT_PAST_DUE (HTTP 403): Payment past due. Billing: {shown}"
+    )
+
+
+@pytest.mark.parametrize(("length", "cut"), [(1000, False), (1001, True)])
+def test_message_cap_boundary(length: int, cut: bool) -> None:
+    message = "m" * (length - 1) + "."
+    error = lexapi.LexAPIError(message, code="X", status=400)
+    shown = "m" * 1000 + "…." if cut else message
+    assert str(LexAPIToolError.from_sdk(error)) == f"LexAPI error X (HTTP 400): {shown}"
+
+
+def test_billing_dedup_compares_the_long_link_whole() -> None:
+    url = "https://lex-api.com/" + "u" * 300
+    body = {
+        "error": "Payment past due",
+        "code": "PAYMENT_PAST_DUE",
+        "message": f"Pay at {url}",
+        "billingUrl": url,
+    }
+    [error, *_] = tool_errors(error_routes_body(body, 403))
+    assert "Billing:" not in str(error)
+    assert error.billing_url == url
+
+
+def test_billing_link_after_the_message_cut_is_not_appended() -> None:
+    # The message holds the link past its 1,000-character cut: the text shows
+    # neither (the comparison is on the whole message).
+    message = "x" * 1200 + f" pay at {BILLING}"
+    body = {"error": message, "code": "PAYMENT_PAST_DUE", "billingUrl": BILLING}
+    [error, *_] = tool_errors(error_routes_body(body, 403))
+    assert str(error) == ("LexAPI error PAYMENT_PAST_DUE (HTTP 403): " + "x" * 1000 + "….")
+    assert BILLING not in str(error)
+    assert error.billing_url == BILLING
+
+
+@pytest.mark.parametrize("blank", ["", "  ", "\n\t"])
+def test_blank_operation_is_absent(blank: str) -> None:
+    body = load_fixture("error.402.json")
+    body["error"]["details"]["operation"] = blank
+    [error, *_] = tool_errors(error_routes_body(body, 402))
+    assert error.operation is None
+    assert str(error) == EXACT["error.402.json"]
+
+
+@pytest.mark.parametrize("blank", ["  ", "\n", "\x00"])
+def test_blank_code_is_unknown_in_text_and_attribute(blank: str) -> None:
+    body = {"success": False, "error": {"code": blank, "message": "Odd"}}
+    [error, *_] = tool_errors(error_routes_body(body, 400))
+    assert str(error) == "LexAPI error UNKNOWN (HTTP 400): Odd."
+    assert error.code == "UNKNOWN"
+    padded = {"success": False, "error": {"code": " NEW_CODE ", "message": "Odd"}}
+    [error, *_] = tool_errors(error_routes_body(padded, 400))
+    assert str(error) == "LexAPI error NEW_CODE (HTTP 400): Odd."
+    assert error.code == " NEW_CODE "  # the API's code as sent
+
+
 # ── retry waits: printed only when the SDK retries ─────────────────────
 
 APP = {"X-LexAPI-Version": "2.30.0"}

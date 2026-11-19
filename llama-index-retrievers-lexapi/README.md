@@ -197,7 +197,7 @@ an answer that could not be read. Using a retriever after `close()` raises
 catch it first to tell a failed payment from a plan gate.
 `RateLimitedError.quota_exhausted` (with `resets_at`, when the quota
 refills) tells an exhausted quota from a per-minute rate limit; the SDK
-retries a rate limit, never a quota.
+retries a rate limit; it does not retry a 429 that is an exhausted quota.
 
 ## What this package does not do
 
