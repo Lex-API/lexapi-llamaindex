@@ -30,6 +30,8 @@ from lexapi import (
     LexAPI,
     LexAPIError,
     PaymentPastDueError,
+    RateLimitedError,
+    TierForbiddenError,
     passages,
 )
 from lexapi.models import DocumentResponse, LegislationAsOfResponse, SemanticLegislationResponse
@@ -70,12 +72,22 @@ class LexAPIToolError(Exception):
 
     For an error the API answered, the message is ``LexAPI error <code>
     (HTTP <status>): <message>``, followed when known by ``Credits reset at
-    <time>.``, ``Billing: <url>`` and ``Retry after <n> s.``. An answer that
-    could not be read, or one of the wrong shape, gives the fixed ``LexAPI
-    error INVALID_RESPONSE (HTTP <status>): The answer could not be read.``
+    <time>.``, ``Billing: <url>`` and ``Retry after <n> s.``. An exhausted
+    quota adds ``This is a used-up quota, not a rate limit: retrying will
+    not help before it resets[ at <time>].`` and never a retry wait; a
+    failed payment never gets a retry wait either. An answer that could not
+    be read, or one of the wrong shape, gives the fixed ``LexAPI error
+    INVALID_RESPONSE (HTTP <status>): The answer could not be read.``
     (without the status when there is none). An invalid argument gives
     ``Invalid argument: ...`` before any request is sent. LlamaIndex agents
     pass the message to the model as the tool's error output.
+
+    The billing and reset information the SDK error carries is also on
+    attributes, so an application can show it without reading the text:
+    ``quota_exhausted``, ``resets_at``, ``operation``, ``weight``,
+    ``available``, ``included``, ``topup``, ``used``, ``upgrade_url``,
+    ``billing_url`` and ``access_ended_at`` (``False`` / ``None`` when the
+    error does not carry them).
 
     SDK exceptions are not attached (neither ``__cause__`` nor
     ``__context__``); an API error's message is the API's own text.
@@ -88,11 +100,42 @@ class LexAPIToolError(Exception):
         code: str,
         status: int | None,
         retry_after: float | None = None,
+        quota_exhausted: bool = False,
+        resets_at: str | None = None,
+        operation: str | None = None,
+        weight: int | None = None,
+        available: int | None = None,
+        included: int | None = None,
+        topup: int | None = None,
+        used: int | None = None,
+        upgrade_url: str | None = None,
+        billing_url: str | None = None,
+        access_ended_at: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+        #: Seconds the server asked to wait before a retry; never set on an
+        #: exhausted quota or a failed payment.
         self.retry_after = retry_after
+        #: True on a 429 that reports an exhausted quota, not a rate limit.
+        self.quota_exhausted = quota_exhausted
+        #: When the credit pool (402) or the quota (429) refills, ISO-8601.
+        self.resets_at = resets_at
+        #: Credit-pool figures of a ``CREDITS_EXHAUSTED`` error.
+        self.operation = operation
+        self.weight = weight
+        self.available = available
+        self.included = included
+        self.topup = topup
+        self.used = used
+        #: ``upgradeUrl`` of a plan gate (``TIER_FORBIDDEN``); never set on a
+        #: failed payment.
+        self.upgrade_url = upgrade_url
+        #: Where to pay the open invoice, and when access ended
+        #: (``PAYMENT_PAST_DUE``).
+        self.billing_url = billing_url
+        self.access_ended_at = access_ended_at
 
     @classmethod
     def from_sdk(cls, error: LexAPIError) -> "LexAPIToolError":
@@ -108,13 +151,42 @@ class LexAPIToolError(Exception):
         if api_message and api_message[-1] not in ".!?":
             api_message += "."
         message = f"LexAPI error {error.code}{http}: {api_message}"
-        if isinstance(error, CreditsExhaustedError) and error.resets_at:
-            message += f" Credits reset at {error.resets_at}."
-        if isinstance(error, PaymentPastDueError) and error.billing_url:
-            message += f" Billing: {error.billing_url}"
-        if error.retry_after is not None:
-            message += f" Retry after {error.retry_after:g} s."
-        return cls(_mask(message), code=error.code, status=status, retry_after=error.retry_after)
+        retry_after = error.retry_after
+        fields: dict[str, Any] = {}
+        if isinstance(error, CreditsExhaustedError):
+            fields.update(
+                resets_at=error.resets_at,
+                operation=error.operation,
+                weight=error.weight,
+                available=error.available,
+                included=error.included,
+                topup=error.topup,
+                used=error.used,
+            )
+            if error.resets_at:
+                message += f" Credits reset at {error.resets_at}."
+        elif isinstance(error, RateLimitedError) and error.quota_exhausted:
+            # A quota does not refill within a retry wait.
+            retry_after = None
+            fields.update(quota_exhausted=True, resets_at=error.resets_at)
+            when = f" at {error.resets_at}" if error.resets_at else ""
+            message += (
+                " This is a used-up quota, not a rate limit: retrying will not help before "
+                f"it resets{when}."
+            )
+        elif isinstance(error, PaymentPastDueError):
+            # Never retried by the SDK, whatever wait the answer named.
+            retry_after = None
+            fields.update(billing_url=error.billing_url, access_ended_at=error.access_ended_at)
+            if error.billing_url:
+                message += f" Billing: {error.billing_url}"
+        elif isinstance(error, TierForbiddenError):
+            fields.update(upgrade_url=error.upgrade_url)
+        if retry_after is not None:
+            message += f" Retry after {retry_after:g} s."
+        return cls(
+            _mask(message), code=error.code, status=status, retry_after=retry_after, **fields
+        )
 
     @classmethod
     def invalid_argument(cls, text: str) -> "LexAPIToolError":

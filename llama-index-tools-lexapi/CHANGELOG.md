@@ -28,7 +28,16 @@
   the status for the tools' own checks (a read answer must carry a
   non-empty `celex` string and a string `content.fullText` when present; an
   as-of `document` must not be blank).
+- An exhausted quota (429) says that retrying will not help before the
+  quota resets, with the reset time when known, and gives no retry wait. A
+  failed payment (`PAYMENT_PAST_DUE`) gives its code, message and billing
+  page, never a retry wait, and is not shown as a plan gate.
+- `LexAPIToolError` carries the billing and reset information of the SDK
+  error as attributes: `quota_exhausted`, `resets_at`, the credit figures
+  (`operation`, `weight`, `available`, `included`, `topup`, `used`),
+  `upgrade_url`, `billing_url` and `access_ended_at`, besides `code`,
+  `status` and `retry_after`.
 - `LexAPIToolEvent` carries each call's `LexAPICallReport`.
 - `with` / `async with`, `close()` / `aclose()`.
-- Depends on `lexapi-client` from its repository at commit `19da4dd` until
+- Depends on `lexapi-client` from its repository at commit `e48dfda` until
   0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).

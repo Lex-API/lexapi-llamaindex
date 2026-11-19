@@ -612,6 +612,10 @@ def error_routes(fixture: str, status: int, headers: dict[str, str]) -> dict[str
     return {path: fixture_route(fixture, status, headers) for path in (LEG, DOC, ASOF)}
 
 
+def error_routes_body(body: Any, status: int) -> dict[str, Route]:
+    return {path: Route(copy.deepcopy(body), status) for path in (LEG, DOC, ASOF)}
+
+
 def assert_detached(error: BaseException) -> None:
     assert error.__cause__ is None
     assert error.__context__ is None
@@ -677,6 +681,227 @@ def test_retry_after_for_any_error_carrying_a_wait() -> None:
 def test_key_shapes_are_masked() -> None:
     error = lexapi.LexAPIError("bad lex_a-b_C", code="X", status=401)
     assert str(LexAPIToolError.from_sdk(error)) == "LexAPI error X (HTTP 401): bad lex_***."
+
+
+# ── billing, quota and reset information ───────────────────────────────
+
+BILLING_FIELDS = (
+    "quota_exhausted",
+    "resets_at",
+    "operation",
+    "weight",
+    "available",
+    "included",
+    "topup",
+    "used",
+    "upgrade_url",
+    "billing_url",
+    "access_ended_at",
+)
+NO_FIELDS: dict[str, Any] = {name: None for name in BILLING_FIELDS} | {"quota_exhausted": False}
+
+
+def billing_fields(error: LexAPIToolError) -> dict[str, Any]:
+    return {name: getattr(error, name) for name in BILLING_FIELDS}
+
+
+def tool_errors(routes: dict[str, Route]) -> list[LexAPIToolError]:
+    """The tool error of every tool, sync and through an agent's error output."""
+    spec, _ = spec_for(routes)
+    errors = []
+    for name, args in CALLS:
+        with pytest.raises(LexAPIToolError) as info:
+            getattr(spec, name)(**args)
+        errors.append(info.value)
+    return errors
+
+
+async def async_tool_errors(routes: dict[str, Route]) -> list[LexAPIToolError]:
+    aclient, _ = make_async_client(routes)
+    spec = LexAPIToolSpec(async_client=aclient)
+    errors = []
+    for name, args in CALLS:
+        with pytest.raises(LexAPIToolError) as info:
+            await getattr(spec, "a" + name)(**args)
+        errors.append(info.value)
+    return errors
+
+
+PAST_DUE_TEXT = (
+    "LexAPI error PAYMENT_PAST_DUE (HTTP 403): Payment past due. "
+    "Billing: https://lex-api.com/dashboard#billing"
+)
+PAST_DUE_FIELDS = NO_FIELDS | {
+    "billing_url": "https://lex-api.com/dashboard#billing",
+    "access_ended_at": "2099-06-02T09:00:00.000Z",
+}
+
+
+async def test_past_due_carries_billing_not_an_upgrade() -> None:
+    routes = error_routes("error.403-past-due.json", 403, {})
+    for error in [*tool_errors(routes), *await async_tool_errors(routes)]:
+        assert str(error) == PAST_DUE_TEXT
+        assert (error.code, error.status, error.retry_after) == ("PAYMENT_PAST_DUE", 403, None)
+        assert billing_fields(error) == PAST_DUE_FIELDS
+        assert "upgrade" not in str(error).lower()
+        assert "plan" not in str(error).lower()
+
+
+def test_past_due_is_caught_as_a_tier_error_by_the_sdk_but_not_shown_as_one() -> None:
+    body = load_fixture("error.403-past-due.json")
+    body["upgradeUrl"] = "/pricing"
+    error = lexapi.LexAPIError.from_response(403, body)
+    assert isinstance(error, lexapi.TierForbiddenError)
+    assert error.upgrade_url == "/pricing"
+    tool_error = LexAPIToolError.from_sdk(error)
+    assert str(tool_error) == PAST_DUE_TEXT
+    assert billing_fields(tool_error) == PAST_DUE_FIELDS
+
+
+async def test_past_due_on_a_429_gets_no_retry_wait() -> None:
+    routes = error_routes("error.403-past-due.json", 429, {"Retry-After": "30"})
+    client, _ = make_client(routes)
+    with pytest.raises(lexapi.PaymentPastDueError) as info:
+        client.semantic_legislation_search("q")
+    assert info.value.retry_after == 30  # the SDK keeps the hint; the tool drops it
+    for error in [*tool_errors(routes), *await async_tool_errors(routes)]:
+        assert str(error) == PAST_DUE_TEXT.replace("HTTP 403", "HTTP 429")
+        assert "Retry" not in str(error)
+        assert error.retry_after is None
+        assert billing_fields(error) == PAST_DUE_FIELDS
+
+
+def test_past_due_without_billing_details() -> None:
+    error = lexapi.PaymentPastDueError("Payment past due", status=403)
+    tool_error = LexAPIToolError.from_sdk(error)
+    assert str(tool_error) == "LexAPI error PAYMENT_PAST_DUE (HTTP 403): Payment past due."
+    assert billing_fields(tool_error) == NO_FIELDS
+
+
+QUOTA_TEXT = (
+    "LexAPI error QUOTA_EXHAUSTED (HTTP 429): Monthly quota exceeded. This is a used-up "
+    "quota, not a rate limit: retrying will not help before it resets at "
+    "2099-07-01T00:00:00.000Z."
+)
+QUOTA_FIELDS = NO_FIELDS | {"quota_exhausted": True, "resets_at": "2099-07-01T00:00:00.000Z"}
+
+
+async def test_quota_429_says_retrying_will_not_help() -> None:
+    # A Retry-After header on a quota 429 is not a wait the SDK passes on.
+    routes = error_routes("error.429-quota.json", 429, {"Retry-After": "30"})
+    for error in [*tool_errors(routes), *await async_tool_errors(routes)]:
+        assert str(error) == QUOTA_TEXT
+        assert (error.code, error.status, error.retry_after) == ("QUOTA_EXHAUSTED", 429, None)
+        assert billing_fields(error) == QUOTA_FIELDS
+        assert "Retry after" not in str(error)
+
+
+def test_quota_429_from_an_older_api_keeps_its_code_and_the_note() -> None:
+    # Before API 2.4.0 a quota 429 had no code; the SDK knows it by its shape.
+    body = load_fixture("error.429-quota.json")
+    del body["code"]
+    [error, *_] = tool_errors(error_routes_body(body, 429))
+    assert str(error) == QUOTA_TEXT.replace("QUOTA_EXHAUSTED", "RATE_LIMITED")
+    assert error.code == "RATE_LIMITED"
+    assert billing_fields(error) == QUOTA_FIELDS
+
+
+def test_quota_without_reset_time_and_with_a_stray_wait() -> None:
+    error = lexapi.RateLimitedError(
+        "Quota exceeded", code="QUOTA_EXHAUSTED", status=429, retry_after=5
+    )
+    tool_error = LexAPIToolError.from_sdk(error)
+    assert str(tool_error) == (
+        "LexAPI error QUOTA_EXHAUSTED (HTTP 429): Quota exceeded. This is a used-up quota, "
+        "not a rate limit: retrying will not help before it resets."
+    )
+    assert tool_error.retry_after is None
+    assert billing_fields(tool_error) == NO_FIELDS | {"quota_exhausted": True}
+
+
+def test_rate_limit_is_not_a_quota() -> None:
+    [error, *_] = tool_errors(error_routes("error.429.json", 429, {"Retry-After": "30"}))
+    assert str(error) == EXACT[429]
+    assert error.retry_after == 30
+    assert billing_fields(error) == NO_FIELDS
+
+
+def test_credits_exhausted_figures() -> None:
+    [error, *_] = tool_errors(error_routes("error.402.json", 402, {}))
+    assert str(error) == EXACT[402]
+    assert billing_fields(error) == NO_FIELDS | {
+        "resets_at": "2099-07-01T00:00:00.000Z",
+        "operation": "semantic_legislation",
+        "weight": 5,
+        "available": 0,
+    }
+    body = load_fixture("error.402.json")
+    body["error"]["details"].update({"included": 500, "topup": 0, "used": 500})
+    [full, *_] = tool_errors(error_routes_body(body, 402))
+    assert str(full) == EXACT[402]
+    assert billing_fields(full) == billing_fields(error) | {
+        "included": 500,
+        "topup": 0,
+        "used": 500,
+    }
+
+
+def test_tier_gate_carries_its_upgrade_url() -> None:
+    body = {"error": "Upgrade required", "code": "TIER_FORBIDDEN", "upgradeUrl": "/pricing"}
+    [error, *_] = tool_errors(error_routes_body(body, 403))
+    assert str(error) == "LexAPI error TIER_FORBIDDEN (HTTP 403): Upgrade required."
+    assert billing_fields(error) == NO_FIELDS | {"upgrade_url": "/pricing"}
+
+
+@pytest.mark.parametrize(("fixture", "status", "code", "headers"), ERRORS[:1])
+def test_other_errors_carry_no_billing_fields(
+    fixture: str, status: int, code: str, headers: dict[str, str]
+) -> None:
+    for error in tool_errors(error_routes(fixture, status, headers)):
+        assert billing_fields(error) == NO_FIELDS
+    assert billing_fields(LexAPIToolError.invalid_argument("x")) == NO_FIELDS
+    assert billing_fields(LexAPIToolError.unreadable()) == NO_FIELDS
+
+
+def test_an_error_envelope_on_a_2xx_carries_no_billing_fields() -> None:
+    body = load_fixture("error.402.json")
+    [error, *_] = tool_errors(error_routes_body(body, 200))
+    assert str(error) == "LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not be read."
+    assert billing_fields(error) == NO_FIELDS
+
+
+async def test_billing_fields_reach_the_agent_on_the_tool_output() -> None:
+    spec, _ = spec_for(error_routes("error.403-past-due.json", 403, {}))
+    tools = tools_by_name(spec)
+    for name, args in CALLS:
+        for output in (call_tool(tools[name], args), await acall_tool(tools[name], args)):
+            assert output.is_error
+            assert PAST_DUE_TEXT in output.content
+            # ToolOutput.exception exists from llama-index-core 0.14.
+            exception = getattr(output, "exception", None)
+            if exception is not None:
+                assert isinstance(exception, LexAPIToolError)
+                assert billing_fields(exception) == PAST_DUE_FIELDS
+
+
+STALL = "STALLEDPAGETOKEN"
+
+
+def test_a_stalled_walk_gets_the_fixed_text() -> None:
+    # No tool walks pages today; a stall the SDK raises is still shown as an
+    # unreadable answer, without the page.
+    page = {"success": True, "citedBy": [{"id": STALL, "citationCount": 1}], "offset": 7}
+    client, _ = make_client({"/citations/cited-by/32099R0001": Route(page)})
+    with pytest.raises(lexapi.InvalidResponseError) as info:
+        list(client.citations.iter_cited_by("32099R0001", page_size=2))
+    assert info.value.status == 200
+    tool_error = LexAPIToolError.from_sdk(info.value)
+    assert str(tool_error) == (
+        "LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not be read."
+    )
+    assert (tool_error.code, tool_error.retry_after) == ("INVALID_RESPONSE", None)
+    assert billing_fields(tool_error) == NO_FIELDS
+    assert not any(STALL in part for part in chain(tool_error))
 
 
 # ── an unreadable answer never leaks its body ──────────────────────────

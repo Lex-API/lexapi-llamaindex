@@ -296,8 +296,34 @@ MUTANTS = [
     Mutant(
         "retry wait only for 429",
         TOOLS_BASE,
-        "        if error.retry_after is not None:",
-        "        if error.status == 429 and error.retry_after is not None:",
+        "        if retry_after is not None:",
+        "        if error.status == 429 and retry_after is not None:",
+    ),
+    Mutant(
+        "quota 429 passes a retry wait on",
+        TOOLS_BASE,
+        "            # A quota does not refill within a retry wait.\n"
+        "            retry_after = None",
+        "            # A quota does not refill within a retry wait.\n            pass",
+    ),
+    Mutant(
+        "failed payment passes a retry wait on",
+        TOOLS_BASE,
+        "            # Never retried by the SDK, whatever wait the answer named.\n"
+        "            retry_after = None",
+        "            # Never retried by the SDK, whatever wait the answer named.\n            pass",
+    ),
+    Mutant(
+        "failed payment shown as a plan gate",
+        TOOLS_BASE,
+        "        elif isinstance(error, PaymentPastDueError):",
+        "        elif False:",
+    ),
+    Mutant(
+        "credit figures not exposed",
+        TOOLS_BASE,
+        "                available=error.available,\n",
+        "",
     ),
     Mutant(
         "as-of tool uses the search policy",

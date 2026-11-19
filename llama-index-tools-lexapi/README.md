@@ -127,6 +127,14 @@ to the model as the tool's error output.
 - An error the API answered: `LexAPI error <code> (HTTP <status>):
   <message>.`, then, when known, ` Credits reset at <time>.`,
   ` Billing: <url>` and ` Retry after <n> s.`
+- An exhausted quota (a 429 the SDK flags as `quota_exhausted`, code
+  `QUOTA_EXHAUSTED`, or `RATE_LIMITED` from APIs before 2.4.0) adds
+  ` This is a used-up quota, not a rate limit: retrying will not help before
+  it resets at <time>.` (`before it resets.` when no time is known), and
+  never a retry wait.
+- A failed payment (`PAYMENT_PAST_DUE`) gives the API's code and message
+  and ` Billing: <url>` when known, never a retry wait. It is not shown as
+  a plan gate.
 - An answer that could not be read, or a read or as-of answer of the wrong
   shape: `LexAPI error INVALID_RESPONSE (HTTP <status>): The answer could
   not be read.` (without `(HTTP <status>)` when there is none).
@@ -138,6 +146,25 @@ to the model as the tool's error output.
 - SDK exceptions are not attached; an API error's message is the API's own
   text.
 - Anything shaped like an API key is masked as `lex_***`.
+
+`LexAPIToolError` also carries what it says as attributes, so an
+application can show billing and reset details without reading the text.
+Catch it around a direct call; through an agent it is on
+`ToolOutput.exception` (llama-index-core 0.14 and later).
+
+| Attribute | Set on | Value |
+|---|---|---|
+| `code`, `status` | every error | the code and HTTP status (`status` is `None` without an HTTP answer) |
+| `retry_after` | errors with a server-named wait | seconds; never set on an exhausted quota or a failed payment |
+| `quota_exhausted` | an exhausted quota (429) | `True`; `False` on every other error |
+| `resets_at` | `CREDITS_EXHAUSTED`, an exhausted quota | when the pool or quota refills (ISO-8601), when the API says |
+| `operation`, `weight`, `available`, `included`, `topup`, `used` | `CREDITS_EXHAUSTED` | the refused operation and the credit figures, when the API sends them |
+| `upgrade_url` | `TIER_FORBIDDEN` | the plan gate's `upgradeUrl`, when sent |
+| `billing_url`, `access_ended_at` | `PAYMENT_PAST_DUE` | where to pay the open invoice, and when access ended, when sent |
+
+An attribute that does not apply, or that the API did not send, is `None`
+(`quota_exhausted` is `False`). An answer that could not be read carries
+none of them.
 
 Invalid constructor options (`similarity_top_k`, `unresolved`, `max_chars`,
 client wiring) raise `ValueError` when the tool spec is built.
