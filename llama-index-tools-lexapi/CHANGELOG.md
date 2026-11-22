@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## [0.1.0] - 2026-11-22
 
 - `LexAPIToolSpec` with three tools, each with an async variant:
   `lexapi_search_legislation`, `lexapi_read_document` and
@@ -35,5 +35,3 @@
   is `None` on an exhausted quota and a failed payment. It can be pickled and copied.
 - `LexAPIToolEvent` carries each call's `LexAPICallReport`.
 - `with` / `async with`, `close()` / `aclose()`.
-- Depends on `lexapi-client` from its repository at commit `e48dfda` until
-  0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## [0.1.0] - 2026-11-22
 
 - `LexAPILegislationRetriever`: semantic search over EU legislation, with
   `as_of`, `celex`, `unresolved` (`withhold` / `drop` / `keep_labelled`) and
@@ -29,5 +29,3 @@
 - SDK errors propagate unchanged. The pinned `lexapi-client` reads answers
   as strict JSON (`NaN` and `Infinity` are refused) and checks their shape:
   such answers raise `lexapi.InvalidResponseError`.
-- Depends on `lexapi-client` from its repository at commit `e48dfda` until
-  0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).
