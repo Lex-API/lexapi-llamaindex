@@ -10,8 +10,9 @@
   tool's description follows the `unresolved` policy.
 - `lexapi_read_document` bounds the sum of the texts and notices shown (as
   they are shown) by `max_chars` (default 20000, `None` for no bound) and
-  lists the articles not shown; the first passage is always shown, a text
-  cut by the same rule as in the retrievers package, a notice whole.
+  lists the articles not shown; the first passage is always shown, a notice
+  whole, a text cut at a paragraph break in the second half of the limit,
+  else at a line break or a space there, else at the limit.
 - `lexapi_legislation_as_of` always withholds an answer LexAPI did not
   establish.
 - Arguments are checked before any request with `Invalid argument: ...`: an

@@ -12,6 +12,13 @@ Both packages depend only on `llama-index-core` and the LexAPI Python SDK
 (`lexapi-client`), whose `lexapi.passages` module builds every text,
 citation and notice.
 
+- Consolidated texts have no legal force: cite the act as published in the
+  Official Journal.
+- A text is passed on as the text for a date only when LexAPI established it
+  for that date.
+- LexAPI provides source texts and citations; it does not assess whether
+  anyone complies with the law. Not legal advice.
+
 ## Install
 
 ```bash
@@ -20,13 +27,6 @@ pip install llama-index-tools-lexapi        # agent tools
 ```
 
 Python 3.11 or later, and a LexAPI key in `LEXAPI_API_KEY`.
-
-- Consolidated texts have no legal force: cite the act as published in the
-  Official Journal.
-- A text is passed on as the text for a date only when LexAPI established it
-  for that date.
-- LexAPI provides source texts and citations; it does not assess whether
-  anyone complies with the law. Not legal advice.
 
 ## Development
 
