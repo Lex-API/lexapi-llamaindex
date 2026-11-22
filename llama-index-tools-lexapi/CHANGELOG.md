@@ -23,7 +23,7 @@
   reset time, billing page or retry wait when they apply; key-shaped text is
   masked. An unreadable answer gets a fixed text and the SDK error is not
   attached: `LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not
-  be read.` for answers the pinned `lexapi-client` refuses (wrong shape, or
+  be read.` for answers `lexapi-client` refuses (wrong shape, or
   not strict JSON: `NaN` and `Infinity` are refused), and the text without
   the status for the tools' own checks (a read answer must carry a
   non-empty `celex` string and a string `content.fullText` when present; an

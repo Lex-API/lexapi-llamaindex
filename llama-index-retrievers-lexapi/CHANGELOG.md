@@ -26,6 +26,6 @@
   restriction and wrong client wiring raise `ValueError`.
 - `with` / `async with`, `close()` / `aclose()`; a closed retriever raises
   `ClientClosedError`, before any other check.
-- SDK errors propagate unchanged. The pinned `lexapi-client` reads answers
+- SDK errors propagate unchanged. `lexapi-client` (0.5.0 or later, before 0.6) reads answers
   as strict JSON (`NaN` and `Infinity` are refused) and checks their shape:
   such answers raise `lexapi.InvalidResponseError`.
