@@ -19,6 +19,15 @@ citation and notice.
 - LexAPI provides source texts and citations; it does not assess whether
   anyone complies with the law. Not legal advice.
 
+## Install
+
+```bash
+pip install llama-index-retrievers-lexapi   # retrievers
+pip install llama-index-tools-lexapi        # agent tools
+```
+
+Python 3.11 or later, and a LexAPI key in `LEXAPI_API_KEY`.
+
 ## Development
 
 Each package is built and tested on its own:

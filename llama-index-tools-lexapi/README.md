@@ -13,14 +13,9 @@ Each tool has an async variant (`alexapi_...`) used by async agents.
 
 ## Install
 
-Version 0.1.0 is not on PyPI yet. Install it from this repository:
-
 ```bash
-pip install "llama-index-tools-lexapi @ git+https://github.com/Lex-API/lexapi-llamaindex#subdirectory=llama-index-tools-lexapi"
+pip install llama-index-tools-lexapi
 ```
-
-After the release it installs from PyPI with
-`pip install llama-index-tools-lexapi`.
 
 Python 3.11 or later. You need a LexAPI key (`lex_...`) from your LexAPI
 dashboard, in the environment as `LEXAPI_API_KEY` or passed as `api_key=`.

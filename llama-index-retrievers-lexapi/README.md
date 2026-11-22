@@ -10,14 +10,9 @@ LlamaIndex retrievers for EU legislation and CJEU case law from
 
 ## Install
 
-Version 0.1.0 is not on PyPI yet. Install it from this repository:
-
 ```bash
-pip install "llama-index-retrievers-lexapi @ git+https://github.com/Lex-API/lexapi-llamaindex#subdirectory=llama-index-retrievers-lexapi"
+pip install llama-index-retrievers-lexapi
 ```
-
-After the release it installs from PyPI with
-`pip install llama-index-retrievers-lexapi`.
 
 Python 3.11 or later. You need a LexAPI key (`lex_...`) from your LexAPI
 dashboard, in the environment as `LEXAPI_API_KEY` or passed as `api_key=`.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## [0.1.0] - 2026-11-22
 
 - `LexAPIToolSpec` with three tools, each with an async variant:
   `lexapi_search_legislation`, `lexapi_read_document` and
@@ -10,8 +10,9 @@
   tool's description follows the `unresolved` policy.
 - `lexapi_read_document` bounds the sum of the texts and notices shown (as
   they are shown) by `max_chars` (default 20000, `None` for no bound) and
-  lists the articles not shown; the first passage is always shown, a text
-  cut by the same rule as in the retrievers package, a notice whole.
+  lists the articles not shown; the first passage is always shown, a notice
+  whole, a text cut at a paragraph break in the second half of the limit,
+  else at a line break or a space there, else at the limit.
 - `lexapi_legislation_as_of` always withholds an answer LexAPI did not
   establish.
 - Arguments are checked before any request with `Invalid argument: ...`: an
@@ -23,7 +24,7 @@
   reset time, billing page or retry wait when they apply; key-shaped text is
   masked. An unreadable answer gets a fixed text and the SDK error is not
   attached: `LexAPI error INVALID_RESPONSE (HTTP 200): The answer could not
-  be read.` for answers the pinned `lexapi-client` refuses (wrong shape, or
+  be read.` for answers `lexapi-client` refuses (wrong shape, or
   not strict JSON: `NaN` and `Infinity` are refused), and the text without
   the status for the tools' own checks (a read answer must carry a
   non-empty `celex` string and a string `content.fullText` when present; an
@@ -35,5 +36,3 @@
   is `None` on an exhausted quota and a failed payment. It can be pickled and copied.
 - `LexAPIToolEvent` carries each call's `LexAPICallReport`.
 - `with` / `async with`, `close()` / `aclose()`.
-- Depends on `lexapi-client` from its repository at commit `e48dfda` until
-  0.5.0 is on PyPI (`lexapi-client>=0.5.0,<0.6` before any upload).
